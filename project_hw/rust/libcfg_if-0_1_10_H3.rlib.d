@@ -1,0 +1,2 @@
+output-1.54.0/libcfg_if-0_1_10_H3.rlib: rustc-1.54.0-src/vendor/cfg-if-0.1.10/src/lib.rs
+output-1.54.0/libcfg_if-0_1_10_H3.rlib: output-1.54.0/libcompiler_builtins-0_1_45_H92.rlib output-1.54.0/libcore.rlib output-1.54.0/librustc_std_workspace_core-1_99_0.rlib
