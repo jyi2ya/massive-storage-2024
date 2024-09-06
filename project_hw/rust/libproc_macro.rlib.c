@@ -35,62 +35,19 @@ static inline uint8_t __mrustc_atomicloop8(volatile uint8_t* slot, uint8_t param
 static inline uint16_t __mrustc_atomicloop16(volatile uint16_t* slot, uint16_t param, int ordering, uint16_t (*cb)(uint16_t, uint16_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint16_t v = atomic_load_explicit((_Atomic uint16_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint16_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint32_t __mrustc_atomicloop32(volatile uint32_t* slot, uint32_t param, int ordering, uint32_t (*cb)(uint32_t, uint32_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint32_t v = atomic_load_explicit((_Atomic uint32_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint32_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint64_t __mrustc_atomicloop64(volatile uint64_t* slot, uint64_t param, int ordering, uint64_t (*cb)(uint64_t, uint64_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint64_t v = atomic_load_explicit((_Atomic uint64_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
-typedef struct { uint64_t lo, hi; } uint128_t;
-typedef struct { uint64_t lo, hi; } int128_t;
-static inline uint128_t intrinsic_ctlz_u128(uint128_t v);
-static inline uint128_t shl128(uint128_t a, uint32_t b);
-static inline uint128_t shr128(uint128_t a, uint32_t b);
-static inline float make_float(int is_neg, int exp, uint32_t mantissa_bits) { float rv; uint32_t vi=(mantissa_bits&((1<<23)-1))|((exp+127)<<23);if(is_neg)vi|=1<<31; memcpy(&rv, &vi, 4); return rv; }
-static inline double make_double(int is_neg, int exp, uint32_t mantissa_bits) { double rv; uint64_t vi=(mantissa_bits&((1ull<<52)-1))|((uint64_t)(exp+1023)<<52);if(is_neg)vi|=1ull<<63; memcpy(&rv, &vi, 4); return rv; }
-static inline uint128_t make128_raw(uint64_t hi, uint64_t lo) { uint128_t rv = { lo, hi }; return rv; }
-static inline uint128_t make128(uint64_t v) { uint128_t rv = { v, 0 }; return rv; }
-static inline float cast128_float(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(23+1))-64)); uint64_t b = shr128(y, (64-(23+1))).lo | (y.lo & 0xFFFFFFFFFF); uint64_t m = a + ((b - ((b >> 63) & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+127-1; uint32_t vi = (e << 23) + m; float rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline double cast128_double(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(52+1))-64)); uint64_t b = shr128(y, (64-(52+1))).lo | (y.lo & 0x7FF); uint64_t m = a + ((b - (b >> 63 & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+1023-1; uint64_t vi = (e << 52) + m; double rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline int cmp128(uint128_t a, uint128_t b) { if(a.hi != b.hi) return a.hi < b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo + b.lo; o->hi = a.hi + b.hi + (o->lo < a.lo ? 1 : 0); return (o->hi < a.hi); }
-static inline bool sub128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo - b.lo; o->hi = a.hi - b.hi - (a.lo < b.lo ? 1 : 0); return (o->hi > a.hi); }
-static inline bool mul128_o(uint128_t a, uint128_t b, uint128_t* o) { bool of = false; o->hi = 0; o->lo = 0; for(int i=0;i<128;i++){ uint64_t m = (1ull << (i % 64)); if(a.hi==0&&a.lo<m)   break; if(i>=64&&a.hi<m) break; if( m & (i >= 64 ? a.hi : a.lo) ) of |= add128_o(*o, b, o); b.hi = (b.hi << 1) | (b.lo >> 63); b.lo = (b.lo << 1); } return of;}
-static inline bool div128_o(uint128_t a, uint128_t b, uint128_t* q, uint128_t* r) { if(a.hi == 0 && b.hi == 0) { if(q) { q->hi=0; q->lo = a.lo / b.lo; } if(r) { r->hi=0; r->lo = a.lo % b.lo; } return false; } if(cmp128(a, b) < 0) { if(q) { q->hi=0; q->lo=0; } if(r) *r = a; return false; } uint128_t a_div_2 = {(a.lo>>1)|(a.hi << 63), a.hi>>1}; int shift = 0; while( cmp128(a_div_2, b) >= 0 && shift < 128 ) { shift += 1; b.hi = (b.hi<<1)|(b.lo>>63); b.lo <<= 1; } if(shift == 128) return true; uint128_t mask = { /*lo=*/(shift >= 64 ? 0 : (1ull << shift)), /*hi=*/(shift < 64 ? 0 : 1ull << (shift-64)) }; shift ++; if(q) { q->hi = 0; q->lo = 0; } while(shift--) { if( cmp128(a, b) >= 0 ) { if(q) add128_o(*q, mask, q); sub128_o(a, b, &a); } mask.lo = (mask.lo >> 1) | (mask.hi << 63); mask.hi >>= 1; b.lo = (b.lo >> 1) | (b.hi << 63); b.hi >>= 1; } if(r) *r = a; return false;}
-static inline uint128_t add128(uint128_t a, uint128_t b) { uint128_t v; add128_o(a, b, &v); return v; }
-static inline uint128_t sub128(uint128_t a, uint128_t b) { uint128_t v; sub128_o(a, b, &v); return v; }
-static inline uint128_t mul128(uint128_t a, uint128_t b) { uint128_t v; mul128_o(a, b, &v); return v; }
-static inline uint128_t div128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, &v, NULL); return v; }
-static inline uint128_t mod128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, NULL, &v); return v;}
-static inline uint128_t and128(uint128_t a, uint128_t b) { uint128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline uint128_t or128 (uint128_t a, uint128_t b) { uint128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline uint128_t xor128(uint128_t a, uint128_t b) { uint128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline uint128_t shl128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline uint128_t shr128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = a.hi >> b; } else { v.lo = a.hi >> (b - 64); v.hi = 0; } return v; }
-static inline uint128_t popcount128(uint128_t a) { uint128_t v = { __builtin_popcountll(a.lo) + __builtin_popcountll(a.hi), 0 }; return v; }
-static inline uint128_t __builtin_bswap128(uint128_t v) { uint128_t rv = { __builtin_bswap64(v.hi), __builtin_bswap64(v.lo) }; return rv; }
+typedef unsigned __int128 uint128_t;
+typedef signed __int128 int128_t;
+static inline uint128_t __builtin_bswap128(uint128_t v) {
+	uint64_t lo = __builtin_bswap64((uint64_t)v);
+	uint64_t hi = __builtin_bswap64((uint64_t)(v>>64));
+	return ((uint128_t)lo << 64) | (uint128_t)hi;
+}
 static inline uint128_t intrinsic_ctlz_u128(uint128_t v) {
-	uint128_t rv = { (v.hi != 0 ? __builtin_clz64(v.hi) : (v.lo != 0 ? 64 + __builtin_clz64(v.lo) : 128)), 0 };
-	return rv;
+	return (v == 0 ? 128 : (v >> 64 != 0 ? __builtin_clz64(v>>64) : 64 + __builtin_clz64(v)));
 }
 static inline uint128_t intrinsic_cttz_u128(uint128_t v) {
-	uint128_t rv = { (v.lo == 0 ? (v.hi == 0 ? 128 : __builtin_ctz64(v.hi) + 64) : __builtin_ctz64(v.lo)), 0 };
-	return rv;
+	return (v == 0 ? 128 : ((v&0xFFFFFFFFFFFFFFFF) == 0 ? __builtin_ctz64(v>>64) + 64 : __builtin_ctz64(v)));
 }
-static inline int128_t make128s_raw(uint64_t hi, uint64_t lo) { int128_t rv = { lo, hi }; return rv; }
-static inline int128_t make128s(int64_t v) { int128_t rv = { v, (v < 0 ? -1 : 0) }; return rv; }
-static inline int128_t neg128s(int128_t v) { int128_t rv = { ~v.lo+1, ~v.hi + (v.lo == 0) }; return rv; }
-static inline float cast128s_float(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_float(make128_raw(v.hi,v.lo)); }
-static inline double cast128s_double(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_double(make128_raw(v.hi,v.lo)); }
-static inline int cmp128s(int128_t a, int128_t b) { if(a.hi != b.hi) return (int64_t)a.hi < (int64_t)b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; add128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna==sgnb && sgno != sgna); }
-static inline bool sub128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; sub128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna!=sgnb && sgno != sgna); }
-static inline bool mul128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna = (a.hi >> 63); bool sgnb = (b.hi >> 63); if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = mul128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); if(sgna != sgnb) *o = neg128s(*o); return rv; }
-static inline bool div128s_o(int128_t a, int128_t b, int128_t* q, int128_t* r) { bool sgna = (a.hi >> 63) != 0; bool sgnb = (b.hi >> 63) != 0; if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = div128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)q, (uint128_t*)r); if(sgna != sgnb && q) *q = neg128s(*q); if(sgna && r) *r = neg128s(*r); return rv; }
-static inline int128_t add128s(int128_t a, int128_t b) { int128_t v; add128s_o(a, b, &v); return v; }
-static inline int128_t sub128s(int128_t a, int128_t b) { int128_t v; sub128s_o(a, b, &v); return v; }
-static inline int128_t mul128s(int128_t a, int128_t b) { int128_t v; mul128s_o(a, b, &v); return v; }
-static inline int128_t div128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, &v, NULL); return v; }
-static inline int128_t mod128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, NULL, &v); return v; }
-static inline int128_t and128s(int128_t a, int128_t b) { int128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline int128_t or128s (int128_t a, int128_t b) { int128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline int128_t xor128s(int128_t a, int128_t b) { int128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline int128_t shl128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline int128_t shr128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = (int64_t)a.hi >> b; } else { v.lo = (int64_t)a.hi >> (b - 64); v.hi = (int64_t)a.hi < 0 ? -1 : 0; } return v; }
 
 static inline int slice_cmp(SLICE_PTR l, SLICE_PTR r) {
 	int rv = memcmp(l.PTR, r.PTR, l.META < r.META ? l.META : r.META);
@@ -118,7 +75,7 @@ static inline uint8_t __mrustc_bitrev8(uint8_t v) { if(v==0||v==0xFF) return v; 
 static inline uint16_t __mrustc_bitrev16(uint16_t v) { if(v==0) return 0; return ((uint16_t)__mrustc_bitrev8(v>>8))|((uint16_t)__mrustc_bitrev8(v)<<8); }
 static inline uint32_t __mrustc_bitrev32(uint32_t v) { if(v==0) return 0; return ((uint32_t)__mrustc_bitrev16(v>>16))|((uint32_t)__mrustc_bitrev16(v)<<16); }
 static inline uint64_t __mrustc_bitrev64(uint64_t v) { if(v==0) return 0; return ((uint64_t)__mrustc_bitrev32(v>>32))|((uint64_t)__mrustc_bitrev32(v)<<32); }
-static inline uint128_t __mrustc_bitrev128(uint128_t v) { uint128_t rv = { __mrustc_bitrev64(v.hi), __mrustc_bitrev64(v.lo) }; return rv; }
+static inline uint128_t __mrustc_bitrev128(uint128_t v) { if(v==0) return 0; uint128_t rv = ((uint128_t)__mrustc_bitrev64(v>>64))|((uint128_t)__mrustc_bitrev64(v)<<64); return rv; }
 static inline uint8_t __mrustc_op_umax8(uint8_t a, uint8_t b) { return (a > b ? a : b); }
 static inline uint8_t __mrustc_op_umin8(uint8_t a, uint8_t b) { return (a < b ? a : b); }
 static inline uint8_t __mrustc_op_imax8(uint8_t a, uint8_t b) { return ((int8_t)a > (int8_t)b ? a : b); }
@@ -729,18 +686,18 @@ typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM19LiteralValu
 struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g  {
 	/*@0*/uint8_t _2; // u8
 	/*@1*/uint8_t _1; // u8
-	/*@8*/uint128_t _0; // u128
+	/*@16*/uint128_t _0; // u128
 } ;
-typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g) == 24) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g) == 32) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM23LiteralValueUnsignedInt0g) == 16) ? 1 : -1 ];
 // struct ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue#SignedInt
 struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g  {
 	/*@0*/uint8_t _2; // u8
 	/*@1*/uint8_t _1; // u8
-	/*@8*/int128_t _0; // i128
+	/*@16*/int128_t _0; // i128
 } ;
-typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g) == 24) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g) == 32) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM21LiteralValueSignedInt0g) == 16) ? 1 : -1 ];
 // struct ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue#Float
 struct s_ZRG2cK18proc_macro0_0_0_H110token_treeM17LiteralValueFloat0g  {
 	/*@0*/uint8_t _2; // u8
@@ -768,7 +725,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  {
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g _1; // ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 } ;
 typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g) == 32) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g) == 8) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g) == 16) ? 1 : -1 ];
 // enum ::"proc_macro-0_0_0_H1"::token_tree::Spacing
 struct e_ZRG2cK18proc_macro0_0_0_H110token_tree7Spacing0g {
 	int8_t TAG;
@@ -806,10 +763,10 @@ typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeJ14TokenTreePu
 // struct ::"proc_macro-0_0_0_H1"::token_tree::TokenTree#Literal
 struct s_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g  {
 	/*@0*/uint8_t _1; // u8
-	/*@8*/struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/
+	/*@16*/struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/
 } ;
-typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H110token_treeJ16TokenTreeLiteral0g) == 16) ? 1 : -1 ];
 // enum ::"proc_macro-0_0_0_H1"::token_tree::TokenTree
 struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g {
 	union {
@@ -820,7 +777,7 @@ struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g {
 		uint8_t TAG;
 	} DATA;
 };
-typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
  // (&'#omitted ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/, &'#omitted ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/, )
 typedef struct TUP_2_ZRTBsG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g_ZRTBsG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g  {
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g *_0; // &'#omitted ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
@@ -1067,8 +1024,8 @@ typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0
 struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 16) ? 1 : -1 ];
 // enum ::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>
 struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g {
 	union {
@@ -1076,7 +1033,7 @@ struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9To
 		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g var_1;
 	} DATA;
 };
-typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
 // struct ::"core-0_0_0"::iter::adapters::step_by::StepBy<::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/,>
 struct s_ZRG4cE9core0_0_04iter8adapters7step_by6StepBy1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g  {
 	/*@0*/RUST_BOOL _2; // bool
@@ -1109,8 +1066,8 @@ typedef char sizeof_assert_TUP_2_ZRTCu_ZRTG2cE9core0_0_06option6Option1gCu [ (si
 struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/
 } ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 16) ? 1 : -1 ];
 // enum ::"core-0_0_0"::option::Option<::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/,>
 struct e_ZRG2cE9core0_0_06option6Option1gG2c_A_B_C1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g {
 	union {
@@ -1118,14 +1075,14 @@ struct e_ZRG2cE9core0_0_06option6Option1gG2c_A_B_C1gG2cK18proc_macro0_0_0_H110to
 		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2c_A_B6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g var_1;
 	} DATA;
 };
-typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gG2c_A_B_C1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gG2c_A_B_C1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gG2c_A_B_C1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gG2c_A_B_C1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
 // struct ::"core-0_0_0"::iter::adapters::peekable::Peekable<::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/,>
 struct s_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g  {
 	/*@0*/struct s_ZRG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g _0; // ::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/
 	/*@32*/struct e_ZRG2cE9core0_0_06option6Option1gG2c_A_B_C1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _1; // ::"core-0_0_0"::option::Option<::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/,>/*E*/
 } ;
-typedef char sizeof_assert_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (sizeof(struct s_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 72) ? 1 : -1 ];
-typedef char alignof_assert_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (ALIGNOF(struct s_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (sizeof(struct s_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 80) ? 1 : -1 ];
+typedef char alignof_assert_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (ALIGNOF(struct s_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 16) ? 1 : -1 ];
 // struct ::"core-0_0_0"::result::Result#Ok<(),usize,>
 struct s_ZRG2cE9core0_0_06resultG8ResultOk2gT0Cu  {
 	/*@0*/uint8_t _1; // u8
@@ -1160,8 +1117,8 @@ typedef char alignof_assert_ZRG3cE9core0_0_03ops5range5Range1gCu[ (ALIGNOF(struc
 struct s_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu  {
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu[ (sizeof(struct s_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu[ (ALIGNOF(struct s_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu[ (sizeof(struct s_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu[ (ALIGNOF(struct s_ZRG2cE9core0_0_06resultG8ResultOk2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu) == 16) ? 1 : -1 ];
 // struct ::"core-0_0_0"::result::Result#Err<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,usize,>
 struct s_ZRG2cE9core0_0_06resultG9ResultErr2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu  {
 	/*@0*/uint8_t _1; // u8
@@ -1176,13 +1133,13 @@ struct e_ZRG2cE9core0_0_06result6Result2gG2cK18proc_macro0_0_0_H110token_tree9To
 		struct s_ZRG2cE9core0_0_06resultG9ResultErr2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu var_1;
 	} DATA;
 };
-typedef char sizeof_assert_ZRG2cE9core0_0_06result6Result2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu[ (sizeof(struct e_ZRG2cE9core0_0_06result6Result2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06result6Result2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu[ (sizeof(struct e_ZRG2cE9core0_0_06result6Result2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gCu) == 48) ? 1 : -1 ];
 // struct ::"core-0_0_0"::ops::control_flow::ControlFlow#Continue<::"core-0_0_0"::result::Result<::"core-0_0_0"::convert::Infallible/*E*/,usize,>/*E*/,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>
 struct s_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69  {
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } ;
-typedef char sizeof_assert_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69[ (sizeof(struct s_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69[ (ALIGNOF(struct s_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69[ (sizeof(struct s_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69[ (ALIGNOF(struct s_ZRG3cE9core0_0_03ops12control_flowL19ControlFlowContinue2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_$287c43cdc5cbee69) == 16) ? 1 : -1 ];
 // struct ::"core-0_0_0"::result::Result#Ok<::"core-0_0_0"::convert::Infallible/*E*/,usize,>
 struct s_ZRG2cE9core0_0_06resultG8ResultOk2gG2c_A7convert10Infallible0gCu  {
 	/*@0*/uint8_t _1; // u8
@@ -1220,7 +1177,7 @@ struct e_ZRG3cE9core0_0_03ops12control_flow11ControlFlow2gG2c_A6result6Result2gG
 		struct s_ZRG3cE9core0_0_03ops12control_flowL16ControlFlowBreak2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_mac$b87b77c50f7ee43 var_1;
 	} DATA;
 };
-typedef char sizeof_assert_ZRG3cE9core0_0_03ops12control_flow11ControlFlow2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_macro0_0_$d87c36a4ba89551f[ (sizeof(struct e_ZRG3cE9core0_0_03ops12control_flow11ControlFlow2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_macro0_0_$d87c36a4ba89551f) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cE9core0_0_03ops12control_flow11ControlFlow2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_macro0_0_$d87c36a4ba89551f[ (sizeof(struct e_ZRG3cE9core0_0_03ops12control_flow11ControlFlow2gG2c_A6result6Result2gG2c_A7convert10Infallible0gCuG2cK18proc_macro0_0_$d87c36a4ba89551f) == 48) ? 1 : -1 ];
 // struct ::"core-0_0_0"::option::Option#Some<::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/,>
 struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g  {
 	/*@0*/struct s_ZRG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g _0; // ::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/
@@ -1302,11 +1259,11 @@ typedef char sizeof_assert_ZRG3cE9core0_0_03ops12control_flow11ControlFlow2gG2c_
 // struct ::"core-0_0_0"::iter::adapters::intersperse::Intersperse<::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/,>
 struct s_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g  {
 	/*@0*/RUST_BOOL _2; // bool
-	/*@8*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
-	/*@48*/struct s_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g _1; // ::"core-0_0_0"::iter::adapters::peekable::Peekable<::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/,>/*S*/
+	/*@16*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
+	/*@64*/struct s_ZRG4cE9core0_0_04iter8adapters8peekable8Peekable1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g _1; // ::"core-0_0_0"::iter::adapters::peekable::Peekable<::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/,>/*S*/
 } ;
-typedef char sizeof_assert_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (sizeof(struct s_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 120) ? 1 : -1 ];
-typedef char alignof_assert_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (ALIGNOF(struct s_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (sizeof(struct s_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 144) ? 1 : -1 ];
+typedef char alignof_assert_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g[ (ALIGNOF(struct s_ZRG4cE9core0_0_04iter8adapters11intersperse11Intersperse1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g) == 16) ? 1 : -1 ];
 // struct ::"core-0_0_0"::iter::adapters::cycle::Cycle<::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/,>
 struct s_ZRG4cE9core0_0_04iter8adapters5cycle5Cycle1gG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g  {
 	/*@0*/struct s_ZRG2cK18proc_macro0_0_0_H112token_stream8IntoIter0g _0; // ::"proc_macro-0_0_0_H1"::token_stream::IntoIter/*S*/
@@ -1692,18 +1649,18 @@ typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF9TokenChar0g[ (A
 struct s_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g  {
 	/*@0*/uint8_t _2; // u8
 	/*@1*/uint8_t _1; // u8
-	/*@8*/uint128_t _0; // u128
+	/*@16*/uint128_t _0; // u128
 } ;
-typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g) == 24) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g) == 32) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF13TokenUnsigned0g) == 16) ? 1 : -1 ];
 // struct ::"proc_macro-0_0_0_H1"::protocol::Token#Signed
 struct s_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g  {
 	/*@0*/uint8_t _2; // u8
 	/*@1*/uint8_t _1; // u8
-	/*@8*/int128_t _0; // i128
+	/*@16*/int128_t _0; // i128
 } ;
-typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g) == 24) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g[ (sizeof(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g) == 32) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g[ (ALIGNOF(struct s_ZRG2cK18proc_macro0_0_0_H18protocolF11TokenSigned0g) == 16) ? 1 : -1 ];
 // struct ::"proc_macro-0_0_0_H1"::protocol::Token#Float
 struct s_ZRG2cK18proc_macro0_0_0_H18protocolF10TokenFloat0g  {
 	/*@0*/uint8_t _2; // u8
@@ -1733,7 +1690,7 @@ struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H18protocol
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H18protocol5Token0g _0; // ::"proc_macro-0_0_0_H1"::protocol::Token/*E*/
 } ;
 typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H18protocol5Token0g[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H18protocol5Token0g) == 32) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H18protocol5Token0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H18protocol5Token0g) == 8) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H18protocol5Token0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gG2cK18proc_macro0_0_0_H18protocol5Token0g) == 16) ? 1 : -1 ];
 // enum ::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::protocol::Token/*E*/,>
 struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H18protocol5Token0g {
 	union {
@@ -1843,16 +1800,16 @@ typedef struct t_ZRTA1BsCy  { SLICE_PTR  DATA[1]; } t_ZRTA1BsCy ; // [&'static s
  // (usize, ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/, )
 typedef struct TUP_2_ZRTCu_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/uintptr_t _0; // usize
-	/*@8*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _1; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
+	/*@16*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _1; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } TUP_2_ZRTCu_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ;
-typedef char sizeof_assert_TUP_2_ZRTCu_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_2_ZRTCu_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 48) ? 1 : -1 ];
+typedef char sizeof_assert_TUP_2_ZRTCu_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_2_ZRTCu_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 64) ? 1 : -1 ];
 typedef struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  (*t_ZRTF2G2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_D_E_F0gG2c_A_B_C1gG2c_D_E_F0g )( struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g , struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  ); // extern "Rust" fn(::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/, ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/, ) -> ::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/
  // (::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/, ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/, )
 typedef struct TUP_2_ZRTG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/
-	/*@40*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _1; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
+	/*@48*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _1; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } TUP_2_ZRTG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ;
-typedef char sizeof_assert_TUP_2_ZRTG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_2_ZRTG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 80) ? 1 : -1 ];
+typedef char sizeof_assert_TUP_2_ZRTG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_2_ZRTG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 96) ? 1 : -1 ];
 // struct ::"core-0_0_0"::closure#I_cloned_33<char,>
 struct s_ZRG1cE9core0_0_0H18closureI_cloned_331gCx  {
 	char _d;
@@ -2133,13 +2090,13 @@ typedef char sizeof_assert_ZRG3cE9core0_0_03ptr8metadata7PtrRepr1gSG3c_A3mem12ma
 struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } ;
-typedef char sizeof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 16) ? 1 : -1 ];
 union u_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g {
 	tUNIT var_0;
 	struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g var_1;
 };
-typedef char sizeof_assert_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(union u_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(union u_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
 // struct ::"core-0_0_0"::mem::manually_drop::ManuallyDrop<::"alloc-0_0_0"::slice::hack::#0::DropGuard<'#local0,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/,>
 struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG4cF10alloc0_0_05slice4hackB_09DropGuard2gG2cK18proc_macro0_0_0_H110$a2ec5c459e67a032  {
 	/*@0*/struct s_ZRG4cF10alloc0_0_05slice4hackB_09DropGuard2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global0g _0; // ::"alloc-0_0_0"::slice::hack::#0::DropGuard<'#local0,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/
@@ -2344,14 +2301,14 @@ struct s_ZRG3cE9core0_0_03fmt3num8UpperHex0g;
 struct s_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/
 } ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 16) ? 1 : -1 ];
 // struct ::"core-0_0_0"::option::IntoIter<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>
 struct s_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct s_ZRG2cE9core0_0_06option4Item1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"core-0_0_0"::option::Item<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*S*/
 } ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_06option8IntoIter1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 16) ? 1 : -1 ];
 // struct ::"core-0_0_0"::mem::manually_drop::ManuallyDrop<::"alloc-0_0_0"::alloc::Global/*S*/,>
 struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2cF10alloc0_0_05alloc6Global0g  {
 	/*@0*/// ZST; // ::"alloc-0_0_0"::alloc::Global/*S*/
@@ -3236,7 +3193,7 @@ typedef struct TUP_2_ZRTT0_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  
 	/*@0*/// ZST; // ()
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _1; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } TUP_2_ZRTT0_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ;
-typedef char sizeof_assert_TUP_2_ZRTT0_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_2_ZRTT0_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_TUP_2_ZRTT0_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_2_ZRTT0_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 48) ? 1 : -1 ];
 typedef struct e_ZRG2cE9core0_0_03cmp8Ordering0g  (*t_ZRTF2BsCuBsCuG2cE9core0_0_03cmp8Ordering0g )( uintptr_t *, uintptr_t * ); // for<'elided#0,'elided#1,> extern "Rust" fn(&'static usize, &'static usize, ) -> ::"core-0_0_0"::cmp::Ordering/*E*/
  // (&'#local0 usize, &'#local1 usize, )
 typedef struct TUP_2_ZRTBsCu_ZRTBsCu  {
@@ -3356,7 +3313,7 @@ typedef char alignof_assert_ZRG3cD15std0_0_0_H190002io5error6Custom0g[ (ALIGNOF(
 typedef struct TUP_1_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/
 } TUP_1_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ;
-typedef char sizeof_assert_TUP_1_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_1_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_TUP_1_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g [ (sizeof(TUP_1_ZRTG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ) == 48) ? 1 : -1 ];
  // (::"core-0_0_0"::alloc::layout::LayoutError/*S*/, )
 typedef struct TUP_1_ZRTG3cE9core0_0_05alloc6layout11LayoutError0g  {
 	/*@0*/// ZST; // ::"core-0_0_0"::alloc::layout::LayoutError/*S*/
@@ -3438,13 +3395,13 @@ typedef char sizeof_assert_TUP_2_ZRTBuSCa_ZRTBuSCa [ (sizeof(TUP_2_ZRTBuSCa_ZRTB
 struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g  {
 	/*@0*/struct e_ZRG2cE9core0_0_06option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g _0; // ::"core-0_0_0"::option::Option<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*E*/
 } ;
-typedef char sizeof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
-typedef char alignof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (ALIGNOF(struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 16) ? 1 : -1 ];
 union u_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g {
 	tUNIT var_0;
 	struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g var_1;
 };
-typedef char sizeof_assert_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(union u_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g[ (sizeof(union u_ZRG3cE9core0_0_03mem12maybe_uninit11MaybeUninit1gG2c_A6option6Option1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g) == 48) ? 1 : -1 ];
 // struct ::"core-0_0_0"::mem::manually_drop::ManuallyDrop<&'#local2 mut [u8],>
 struct s_ZRG3cE9core0_0_03mem13manually_drop12ManuallyDrop1gBuSCa  {
 	/*@0*/SLICE_PTR _0; // &'#local2 mut [u8]
@@ -3655,31 +3612,31 @@ struct s_ZRG3cD15std0_0_0_H190004sync5mutex5Mutex1gG4c_A2io8buffered9bufreader9B
 } ;
 typedef char sizeof_assert_ZRG3cD15std0_0_0_H190004sync5mutex5Mutex1gG4c_A2io8buffered9bufreader9BufReader1gG3c_A2io5stdio8StdinRaw0g[ (sizeof(struct s_ZRG3cD15std0_0_0_H190004sync5mutex5Mutex1gG4c_A2io8buffered9bufreader9BufReader1gG3c_A2io5stdio8StdinRaw0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cD15std0_0_0_H190004sync5mutex5Mutex1gG4c_A2io8buffered9bufreader9BufReader1gG3c_A2io5stdio8StdinRaw0g[ (ALIGNOF(struct s_ZRG3cD15std0_0_0_H190004sync5mutex5Mutex1gG4c_A2io8buffered9bufreader9BufReader1gG3c_A2io5stdio8StdinRaw0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA40Ca  { uint8_t  DATA[40]; } t_ZRTA40Ca ; // [u8; 40]
+typedef struct t_ZRTA48Ca  { uint8_t  DATA[48]; } t_ZRTA48Ca ; // [u8; 48]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_mutex_t
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g  {
-	/*@0*/t_ZRTA40Ca _0; // [u8; 40]
+	/*@0*/t_ZRTA48Ca _0; // [u8; 48]
 } __attribute__((__aligned__(8),)) ;
-typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 8) ? 1 : -1 ];
 // struct ::"core-0_0_0"::cell::UnsafeCell<::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_mutex_t/*S*/,>
 struct s_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g  {
 	/*@0*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_mutex_t/*S*/
 } ;
-typedef char sizeof_assert_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (sizeof(struct s_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (sizeof(struct s_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (ALIGNOF(struct s_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 8) ? 1 : -1 ];
 // struct ::"std-0_0_0_H19000"::sys::unix::mutex::Mutex
 struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g  {
 	/*@0*/struct s_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g _0; // ::"core-0_0_0"::cell::UnsafeCell<::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_mutex_t/*S*/,>/*S*/
 } ;
-typedef char sizeof_assert_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g[ (sizeof(struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g[ (sizeof(struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g[ (ALIGNOF(struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g) == 8) ? 1 : -1 ];
 struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g;
 // struct ::"std-0_0_0_H19000"::sys::unix::mutex::ReentrantMutex
 struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g  {
 	/*@0*/struct s_ZRG2cE9core0_0_04cell10UnsafeCell1gG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g _0; // ::"core-0_0_0"::cell::UnsafeCell<::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_mutex_t/*S*/,>/*S*/
 } ;
-typedef char sizeof_assert_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g[ (sizeof(struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g[ (sizeof(struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g[ (ALIGNOF(struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g) == 8) ? 1 : -1 ];
 // struct ::"core-0_0_0"::cell::UnsafeCell<isize,>
 struct s_ZRG2cE9core0_0_04cell10UnsafeCell1gCv  {
@@ -3756,10 +3713,10 @@ typedef char alignof_assert_ZRG2cE9core0_0_06marker13PhantomPinned0g[ (ALIGNOF(s
 // struct ::"std-0_0_0_H19000"::sys_common::remutex::ReentrantMutex<::"core-0_0_0"::cell::RefCell<::"std-0_0_0_H19000"::io::buffered::linewriter::LineWriter<::"std-0_0_0_H19000"::io::stdio::StdoutRaw/*S*/,>/*S*/,>/*S*/,>
 struct s_ZRG3cD15std0_0_0_H1900010sys_common7remutex14ReentrantMutex1gG2cE9core0_0_04cell7RefCell1gG4c_A2io8buffered10linewriter$1f423e201b6a224  {
 	/*@0*/// ZST; // ::"core-0_0_0"::marker::PhantomPinned/*S*/
-	/*@0*/struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g _0; // ::"std-0_0_0_H19000"::sys::unix::mutex::ReentrantMutex/*S*/
-	/*@40*/struct s_ZRG2cE9core0_0_04cell7RefCell1gG4cD15std0_0_0_H190002io8buffered10linewriter10LineWriter1gG3c_D2io5stdio9StdoutRaw0g _1; // ::"core-0_0_0"::cell::RefCell<::"std-0_0_0_H19000"::io::buffered::linewriter::LineWriter<::"std-0_0_0_H19000"::io::stdio::StdoutRaw/*S*/,>/*S*/,>/*S*/
+	/*@0*/struct s_ZRG2cE9core0_0_04cell7RefCell1gG4cD15std0_0_0_H190002io8buffered10linewriter10LineWriter1gG3c_D2io5stdio9StdoutRaw0g _1; // ::"core-0_0_0"::cell::RefCell<::"std-0_0_0_H19000"::io::buffered::linewriter::LineWriter<::"std-0_0_0_H19000"::io::stdio::StdoutRaw/*S*/,>/*S*/,>/*S*/
+	/*@40*/struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex14ReentrantMutex0g _0; // ::"std-0_0_0_H19000"::sys::unix::mutex::ReentrantMutex/*S*/
 } ;
-typedef char sizeof_assert_ZRG3cD15std0_0_0_H1900010sys_common7remutex14ReentrantMutex1gG2cE9core0_0_04cell7RefCell1gG4c_A2io8buffered10linewriter$1f423e201b6a224[ (sizeof(struct s_ZRG3cD15std0_0_0_H1900010sys_common7remutex14ReentrantMutex1gG2cE9core0_0_04cell7RefCell1gG4c_A2io8buffered10linewriter$1f423e201b6a224) == 80) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cD15std0_0_0_H1900010sys_common7remutex14ReentrantMutex1gG2cE9core0_0_04cell7RefCell1gG4c_A2io8buffered10linewriter$1f423e201b6a224[ (sizeof(struct s_ZRG3cD15std0_0_0_H1900010sys_common7remutex14ReentrantMutex1gG2cE9core0_0_04cell7RefCell1gG4c_A2io8buffered10linewriter$1f423e201b6a224) == 88) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cD15std0_0_0_H1900010sys_common7remutex14ReentrantMutex1gG2cE9core0_0_04cell7RefCell1gG4c_A2io8buffered10linewriter$1f423e201b6a224[ (ALIGNOF(struct s_ZRG3cD15std0_0_0_H1900010sys_common7remutex14ReentrantMutex1gG2cE9core0_0_04cell7RefCell1gG4c_A2io8buffered10linewriter$1f423e201b6a224) == 8) ? 1 : -1 ];
 // struct ::"alloc-0_0_0"::vec::into_iter::#0::DropGuard<'#omitted,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>
 struct s_ZRG4cF10alloc0_0_03vec9into_iterB_09DropGuard2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global0g  {
@@ -9474,12 +9431,12 @@ __attribute__((weak)) union u_static_ZRQBsG2cK18proc_macro0_0_0_H110token_tree7S
 __attribute__((weak)) union u_static_ZRQBsG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g2cE9core0_0_03fmt5Debug0gG6vtable0g{ struct s_ZRG2cE9core0_0_03fmtF11Debugvtable0g val; uintptr_t raw[4]; } ZRQBsG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g2cE9core0_0_03fmt5Debug0gG6vtable0g;	// static <&'static ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/
 __attribute__((weak)) union u_static_ZRQBuG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCa2cE9core0_0_03fmt5Write0gG6vtable0g{ struct s_ZRG2cE9core0_0_03fmtF11Writevtable0g val; uintptr_t raw[6]; } ZRQBuG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCa2cE9core0_0_03fmt5Write0gG6vtable0g;	// static <&'#omitted mut ::"std-0_0_0_H19000"::io::#0::Adaptor<'#local3,::"std-0_0_0_H19000"::io::cursor::Cursor<&'#local2 mut [u8],>/*S*/,>/*S*/ as ::"core-0_0_0"::fmt::Write>::vtable# : ::"core-0_0_0"::fmt::Write#vtable/*S*/
 static union u_static_ZRG2cF10alloc0_0_07raw_vecG7lifted13gG2c_A_B6RawVec2gCaG2c_A5alloc6Global0gCaG2c_A_E_F0g ZRG2cF10alloc0_0_07raw_vecG7lifted13gG2c_A_B6RawVec2gCaG2c_A5alloc6Global0gCaG2c_A_E_F0g = { .raw = {0x1ull} };	// static ::"alloc-0_0_0"::raw_vec::lifted#1<::"alloc-0_0_0"::raw_vec::RawVec<u8,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/,u8,::"alloc-0_0_0"::alloc::Global/*S*/,> : usize = 0100000000000000{}
-static union u_static_ZRG2cF10alloc0_0_07raw_vecG7lifted13gG2c_A_B6RawVec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global$e735719850135ba2 ZRG2cF10alloc0_0_07raw_vecG7lifted13gG2c_A_B6RawVec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global$e735719850135ba2 = { .raw = {0x28ull} };	// static ::"alloc-0_0_0"::raw_vec::lifted#1<::"alloc-0_0_0"::raw_vec::RawVec<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,> : usize = 2800000000000000{}
+static union u_static_ZRG2cF10alloc0_0_07raw_vecG7lifted13gG2c_A_B6RawVec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global$e735719850135ba2 ZRG2cF10alloc0_0_07raw_vecG7lifted13gG2c_A_B6RawVec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global$e735719850135ba2 = { .raw = {0x30ull} };	// static ::"alloc-0_0_0"::raw_vec::lifted#1<::"alloc-0_0_0"::raw_vec::RawVec<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,> : usize = 3000000000000000{}
 static union u_static_ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gCa ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gCa = { .raw = {0x1ull,0x1ull} };	// static ::"core-0_0_0"::alloc::layout::lifted#0<::"core-0_0_0"::alloc::layout::Layout/*S*/,u8,> : ::"core-0_0_0"::alloc::layout::Layout/*S*/ = 0100000000000000 0100000000000000{}
 static union u_static_ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H14span4Span0g ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H14span4Span0g = { .raw = {0x0ull,0x1ull} };	// static ::"core-0_0_0"::alloc::layout::lifted#0<::"core-0_0_0"::alloc::layout::Layout/*S*/,::"proc_macro-0_0_0_H1"::span::Span/*S*/,> : ::"core-0_0_0"::alloc::layout::Layout/*S*/ = 0000000000000000 0100000000000000{}
-static union u_static_ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g = { .raw = {0x28ull,0x8ull} };	// static ::"core-0_0_0"::alloc::layout::lifted#0<::"core-0_0_0"::alloc::layout::Layout/*S*/,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,> : ::"core-0_0_0"::alloc::layout::Layout/*S*/ = 2800000000000000 0800000000000000{}
+static union u_static_ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ZRG3cE9core0_0_05alloc6layoutG7lifted02gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g = { .raw = {0x30ull,0x10ull} };	// static ::"core-0_0_0"::alloc::layout::lifted#0<::"core-0_0_0"::alloc::layout::Layout/*S*/,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,> : ::"core-0_0_0"::alloc::layout::Layout/*S*/ = 3000000000000000 1000000000000000{}
 static union u_static_ZRG3cE9core0_0_05alloc6layoutG7lifted12gG3c_A_B_C6Layout0gCa ZRG3cE9core0_0_05alloc6layoutG7lifted12gG3c_A_B_C6Layout0gCa = { .raw = {0x1ull} };	// static ::"core-0_0_0"::alloc::layout::lifted#1<::"core-0_0_0"::alloc::layout::Layout/*S*/,u8,> : usize = 0100000000000000{}
-static union u_static_ZRG3cE9core0_0_05alloc6layoutG7lifted12gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ZRG3cE9core0_0_05alloc6layoutG7lifted12gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g = { .raw = {0x28ull} };	// static ::"core-0_0_0"::alloc::layout::lifted#1<::"core-0_0_0"::alloc::layout::Layout/*S*/,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,> : usize = 2800000000000000{}
+static union u_static_ZRG3cE9core0_0_05alloc6layoutG7lifted12gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g ZRG3cE9core0_0_05alloc6layoutG7lifted12gG3c_A_B_C6Layout0gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g = { .raw = {0x30ull} };	// static ::"core-0_0_0"::alloc::layout::lifted#1<::"core-0_0_0"::alloc::layout::Layout/*S*/,::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,> : usize = 3000000000000000{}
 union u_static_ZRG3cK18proc_macro0_0_0_H1B_0B_09FRAGMENTS0g ZRG3cK18proc_macro0_0_0_H1B_0B_09FRAGMENTS0g = { .raw = {(uintptr_t)"Waiting for input\x0d\n",0x13ull} };	// static ::"proc_macro-0_0_0_H1"::#0::#0::FRAGMENTS : [&'static str; 1] = 0010000000000000 1300000000000000{@0x0+8 = "Waiting for input\u{d}\n"}
 union u_static_ZRG3cK18proc_macro0_0_0_H1B_0B_19FRAGMENTS0g ZRG3cK18proc_macro0_0_0_H1B_0B_19FRAGMENTS0g = { .raw = {(uintptr_t)"INPUT = `",0x9ull,(uintptr_t)"`\x0d\n",0x3ull} };	// static ::"proc_macro-0_0_0_H1"::#0::#1::FRAGMENTS : [&'static str; 2] = 0010000000000000 0900000000000000 0010000000000000 0300000000000000{@0x0+8 = "INPUT = `", @0x10+8 = "`\u{d}\n"}
 union u_static_ZRG3cK18proc_macro0_0_0_H1B_0B_29FRAGMENTS0g ZRG3cK18proc_macro0_0_0_H1B_0B_29FRAGMENTS0g = { .raw = {(uintptr_t)"OUTPUT = `",0xaull,(uintptr_t)"`\x0d\n",0x3ull} };	// static ::"proc_macro-0_0_0_H1"::#0::#2::FRAGMENTS : [&'static str; 2] = 0010000000000000 0A00000000000000 0010000000000000 0300000000000000{@0x0+8 = "OUTPUT = `", @0x10+8 = "`\u{d}\n"}
@@ -9510,8 +9467,8 @@ union u_static_ZRG3cK18proc_macro0_0_0_H110token_treeB_39FRAGMENTS0g ZRG3cK18pro
 union u_static_ZRG2cK18proc_macro0_0_0_H110token_treeG7lifted00g ZRG2cK18proc_macro0_0_0_H110token_treeG7lifted00g = { .raw = {0x0ull,0x3000000003ull,0x0ull,0x2ull,0x0ull,0x0ull,0x2ull} };	// static ::"proc_macro-0_0_0_H1"::token_tree::lifted#0 : [::"core-0_0_0"::fmt::rt::v1::Argument/*S*/; 1] = 0000000000000000 0300000030000000 0000000000000000 0200000000000000 0000000000000000 0000000000000000 0200000000000000{}
 union u_static_ZRQCu2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCu2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICuA9drop_glue0g,0x8ull,0x8ull,(uintptr_t)&ZRQCu2cE9core0_0_03fmt5Debug0g_B0g} };	// static <usize as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 0800000000000000 0800000000000000 0010000000000000{@0x0+8 = &<usize /*- */>::#drop_glue, @0x18+8 = &<usize as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQCa2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCa2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICaA9drop_glue0g,0x1ull,0x1ull,(uintptr_t)&ZRQCa2cE9core0_0_03fmt5Debug0g_B0g} };	// static <u8 as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 0100000000000000 0100000000000000 0010000000000000{@0x0+8 = &<u8 /*- */>::#drop_glue, @0x18+8 = &<u8 as ::"core-0_0_0"::fmt::Debug>::fmt}
-union u_static_ZRQCi2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCi2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICiA9drop_glue0g,0x10ull,0x8ull,(uintptr_t)&ZRQCi2cE9core0_0_03fmt5Debug0g_B0g} };	// static <u128 as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 1000000000000000 0800000000000000 0010000000000000{@0x0+8 = &<u128 /*- */>::#drop_glue, @0x18+8 = &<u128 as ::"core-0_0_0"::fmt::Debug>::fmt}
-union u_static_ZRQCj2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCj2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICjA9drop_glue0g,0x10ull,0x8ull,(uintptr_t)&ZRQCj2cE9core0_0_03fmt5Debug0g_B0g} };	// static <i128 as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 1000000000000000 0800000000000000 0010000000000000{@0x0+8 = &<i128 /*- */>::#drop_glue, @0x18+8 = &<i128 as ::"core-0_0_0"::fmt::Debug>::fmt}
+union u_static_ZRQCi2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCi2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICiA9drop_glue0g,0x10ull,0x10ull,(uintptr_t)&ZRQCi2cE9core0_0_03fmt5Debug0g_B0g} };	// static <u128 as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 1000000000000000 1000000000000000 0010000000000000{@0x0+8 = &<u128 /*- */>::#drop_glue, @0x18+8 = &<u128 as ::"core-0_0_0"::fmt::Debug>::fmt}
+union u_static_ZRQCj2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCj2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICjA9drop_glue0g,0x10ull,0x10ull,(uintptr_t)&ZRQCj2cE9core0_0_03fmt5Debug0g_B0g} };	// static <i128 as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 1000000000000000 1000000000000000 0010000000000000{@0x0+8 = &<i128 /*- */>::#drop_glue, @0x18+8 = &<i128 as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQCo2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCo2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICoA9drop_glue0g,0x8ull,0x8ull,(uintptr_t)&ZRQCo2cE9core0_0_03fmt5Debug0g_B0g} };	// static <f64 as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 0800000000000000 0800000000000000 0010000000000000{@0x0+8 = &<f64 /*- */>::#drop_glue, @0x18+8 = &<f64 as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQCx2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQCx2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRICxA9drop_glue0g,0x4ull,0x4ull,(uintptr_t)&ZRQCx2cE9core0_0_03fmt5Debug0g_B0g} };	// static <char as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 0400000000000000 0400000000000000 0010000000000000{@0x0+8 = &<char /*- */>::#drop_glue, @0x18+8 = &<char as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQG2cF10alloc0_0_05boxed3Box2gG2cK18proc_macro0_0_0_H110diagnostic10Diagnostic0gG2c_A5alloc6Global0g2cE9core0_0_03fmt5$9857bca567128dde ZRQG2cF10alloc0_0_05boxed3Box2gG2cK18proc_macro0_0_0_H110diagnostic10Diagnostic0gG2c_A5alloc6Global0g2cE9core0_0_03fmt5$9857bca567128dde = { .raw = {(uintptr_t)&ZRIG2cF10alloc0_0_05boxed3Box2gG2cK18proc_macro0_0_0_H110diagnostic10Diagnostic0gG2c_A5alloc6Global0gA9drop_glue0g,0x8ull,0x8ull,(uintptr_t)&ZRQG2cF10alloc0_0_05boxed3Box2gG2cK18proc_macro0_0_0_H110diagnostic10Diagnostic0gG2c_A5alloc6Global0g2cE9core0_0_03fmt5$3c45394f014e6dd6} };	// static <::"alloc-0_0_0"::boxed::Box<::"proc_macro-0_0_0_H1"::diagnostic::Diagnostic/*S*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 0800000000000000 0800000000000000 0010000000000000{@0x0+8 = &<::"alloc-0_0_0"::boxed::Box<::"proc_macro-0_0_0_H1"::diagnostic::Diagnostic/*S*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"alloc-0_0_0"::boxed::Box<::"proc_macro-0_0_0_H1"::diagnostic::Diagnostic/*S*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
@@ -9521,7 +9478,7 @@ union u_static_ZRQG2cF10alloc0_0_03vec3Vec2gCaG2c_A5alloc6Global0g2cE9core0_0_03
 union u_static_ZRQG3cE9core0_0_05alloc6layout11LayoutError0g2c_A3fmt5Debug0gG6vtable0g ZRQG3cE9core0_0_05alloc6layout11LayoutError0g2c_A3fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG3cE9core0_0_05alloc6layout11LayoutError0gA9drop_glue0g,0x0ull,0x1ull,(uintptr_t)&ZRQG3cE9core0_0_05alloc6layout11LayoutError0g2c_A3fmt5Debug0g_E0g} };	// static <::"core-0_0_0"::alloc::layout::LayoutError/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 0000000000000000 0100000000000000 0010000000000000{@0x0+8 = &<::"core-0_0_0"::alloc::layout::LayoutError/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"core-0_0_0"::alloc::layout::LayoutError/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQG2cK18proc_macro0_0_0_H110token_tree5Group0g2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQG2cK18proc_macro0_0_0_H110token_tree5Group0g2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG2cK18proc_macro0_0_0_H110token_tree5Group0gA9drop_glue0g,0x20ull,0x8ull,(uintptr_t)&ZRQG2cK18proc_macro0_0_0_H110token_tree5Group0g2cE9core0_0_03fmt5Debug0g_E0g} };	// static <::"proc_macro-0_0_0_H1"::token_tree::Group/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 2000000000000000 0800000000000000 0010000000000000{@0x0+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Group/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Group/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQG2cK18proc_macro0_0_0_H110token_tree5Ident0g2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQG2cK18proc_macro0_0_0_H110token_tree5Ident0g2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG2cK18proc_macro0_0_0_H110token_tree5Ident0gA9drop_glue0g,0x20ull,0x8ull,(uintptr_t)&ZRQG2cK18proc_macro0_0_0_H110token_tree5Ident0g2cE9core0_0_03fmt5Debug0g_E0g} };	// static <::"proc_macro-0_0_0_H1"::token_tree::Ident/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 2000000000000000 0800000000000000 0010000000000000{@0x0+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Ident/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Ident/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
-union u_static_ZRQG2cK18proc_macro0_0_0_H110token_tree7Literal0g2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQG2cK18proc_macro0_0_0_H110token_tree7Literal0g2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG2cK18proc_macro0_0_0_H110token_tree7Literal0gA9drop_glue0g,0x20ull,0x8ull,(uintptr_t)&ZRQG2cK18proc_macro0_0_0_H110token_tree7Literal0g2cE9core0_0_03fmt5Debug0g_E0g} };	// static <::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 2000000000000000 0800000000000000 0010000000000000{@0x0+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
+union u_static_ZRQG2cK18proc_macro0_0_0_H110token_tree7Literal0g2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQG2cK18proc_macro0_0_0_H110token_tree7Literal0g2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG2cK18proc_macro0_0_0_H110token_tree7Literal0gA9drop_glue0g,0x20ull,0x10ull,(uintptr_t)&ZRQG2cK18proc_macro0_0_0_H110token_tree7Literal0g2cE9core0_0_03fmt5Debug0g_E0g} };	// static <::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 2000000000000000 1000000000000000 0010000000000000{@0x0+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Literal/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQG2cK18proc_macro0_0_0_H110token_tree5Punct0g2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQG2cK18proc_macro0_0_0_H110token_tree5Punct0g2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG2cK18proc_macro0_0_0_H110token_tree5Punct0gA9drop_glue0g,0x8ull,0x4ull,(uintptr_t)&ZRQG2cK18proc_macro0_0_0_H110token_tree5Punct0g2cE9core0_0_03fmt5Debug0g_E0g} };	// static <::"proc_macro-0_0_0_H1"::token_tree::Punct/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 0800000000000000 0400000000000000 0010000000000000{@0x0+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Punct/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"proc_macro-0_0_0_H1"::token_tree::Punct/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
 union u_static_ZRQG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCa2cE9core0_0_03fmt5Write0gG6vtable0g ZRQG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCa2cE9core0_0_03fmt5Write0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCaA9drop_glue0g,0x18ull,0x8ull,(uintptr_t)&ZRQG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCa2cE9core0_0_03fmt5Write0g9write_fmt0g,(uintptr_t)&ZRQG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCa2cE9core0_0_03fmt5Write0g10write_char0g,(uintptr_t)&ZRQG3cD15std0_0_0_H190002ioB_07Adaptor1gG3c_A2io6cursor6Cursor1gBuSCa2cE9core0_0_03fmt5Write0g9write_str0g} };	// static <::"std-0_0_0_H19000"::io::#0::Adaptor<'#local3,::"std-0_0_0_H19000"::io::cursor::Cursor<&'#local2 mut [u8],>/*S*/,>/*S*/ as ::"core-0_0_0"::fmt::Write>::vtable# : ::"core-0_0_0"::fmt::Write#vtable/*S*/ = 0010000000000000 1800000000000000 0800000000000000 0010000000000000 0010000000000000 0010000000000000{@0x0+8 = &<::"std-0_0_0_H19000"::io::#0::Adaptor<'#local3,::"std-0_0_0_H19000"::io::cursor::Cursor<&'#local2 mut [u8],>/*S*/,>/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"std-0_0_0_H19000"::io::#0::Adaptor<'#local3,::"std-0_0_0_H19000"::io::cursor::Cursor<&'#local2 mut [u8],>/*S*/,>/*S*/ as ::"core-0_0_0"::fmt::Write>::write_fmt, @0x20+8 = &<::"std-0_0_0_H19000"::io::#0::Adaptor<'#local3,::"std-0_0_0_H19000"::io::cursor::Cursor<&'#local2 mut [u8],>/*S*/,>/*S*/ as ::"core-0_0_0"::fmt::Write>::write_char, @0x28+8 = &<::"std-0_0_0_H19000"::io::#0::Adaptor<'#local3,::"std-0_0_0_H19000"::io::cursor::Cursor<&'#local2 mut [u8],>/*S*/,>/*S*/ as ::"core-0_0_0"::fmt::Write>::write_str}
 union u_static_ZRQG3cD15std0_0_0_H190002io5error5Error0g2cE9core0_0_03fmt5Debug0gG6vtable0g ZRQG3cD15std0_0_0_H190002io5error5Error0g2cE9core0_0_03fmt5Debug0gG6vtable0g = { .raw = {(uintptr_t)&ZRIG3cD15std0_0_0_H190002io5error5Error0gA9drop_glue0g,0x10ull,0x8ull,(uintptr_t)&ZRQG3cD15std0_0_0_H190002io5error5Error0g2cE9core0_0_03fmt5Debug0g_F0g} };	// static <::"std-0_0_0_H19000"::io::error::Error/*S*/ as ::"core-0_0_0"::fmt::Debug>::vtable# : ::"core-0_0_0"::fmt::Debug#vtable/*S*/ = 0010000000000000 1000000000000000 0800000000000000 0010000000000000{@0x0+8 = &<::"std-0_0_0_H19000"::io::error::Error/*S*/ /*- */>::#drop_glue, @0x18+8 = &<::"std-0_0_0_H19000"::io::error::Error/*S*/ as ::"core-0_0_0"::fmt::Debug>::fmt}
@@ -9649,8 +9606,8 @@ static void  ZRG2cF10alloc0_0_05alloc8box_free2gG4cD15std0_0_0_H190003sys4unix5m
 	uint8_t *var5;	// *mut u8
 	struct s_ZRG3cE9core0_0_03ptr8non_null7NonNull1gCa var6;	// ::"core-0_0_0"::ptr::non_null::NonNull<u8,>/*S*/
 	var2._0 = 0x8ull;	// _2 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x8 usize})
-	var1._0 = 0x28ull;
-	var1._1 = var2;	// _1 = Struct(::"core-0_0_0"::alloc::layout::Layout, {0x28 usize, _2})
+	var1._0 = 0x30ull;
+	var1._1 = var2;	// _1 = Struct(::"core-0_0_0"::alloc::layout::Layout, {0x30 usize, _2})
 	var0 = & arg1;	// _0 = Borrow(Shared, a1)
 	var3 = (struct s_ZRG4cD15std0_0_0_H190003sys4unix5mutex5Mutex0g *)arg0._0;	// _3 = Cast(a0.0 as *mut ::"std-0_0_0_H19000"::sys::unix::mutex::Mutex/*S*/)
 	var5 = (uint8_t *)var3;	// _5 = Cast(_3 as *mut u8)
@@ -9800,9 +9757,9 @@ static void  ZRG2cF10alloc0_0_05alloc8box_free2gA1G2cK18proc_macro0_0_0_H110toke
 	uint8_t *var4;	// *const u8
 	uint8_t *var5;	// *mut u8
 	struct s_ZRG3cE9core0_0_03ptr8non_null7NonNull1gCa var6;	// ::"core-0_0_0"::ptr::non_null::NonNull<u8,>/*S*/
-	var2._0 = 0x8ull;	// _2 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x8 usize})
-	var1._0 = 0x28ull;
-	var1._1 = var2;	// _1 = Struct(::"core-0_0_0"::alloc::layout::Layout, {0x28 usize, _2})
+	var2._0 = 0x10ull;	// _2 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x10 usize})
+	var1._0 = 0x30ull;
+	var1._1 = var2;	// _1 = Struct(::"core-0_0_0"::alloc::layout::Layout, {0x30 usize, _2})
 	var0 = & arg1;	// _0 = Borrow(Shared, a1)
 	var3 = (t_ZRTA1G2cK18proc_macro0_0_0_H110token_tree9TokenTree0g *)arg0._0;	// _3 = Cast(a0.0 as *mut [::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/; 1])
 	var5 = (uint8_t *)var3;	// _5 = Cast(_3 as *mut u8)
@@ -9912,9 +9869,9 @@ static void  ZRG2cF10alloc0_0_05alloc8box_free2gSG2cK18proc_macro0_0_0_H110token
 	var3 = arg0._0;	// _3 = Cast(a0.0 as *mut [::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/])
 	var0 = var3;	// _0 = Borrow(Shared, _3*)
 	var1 = var0;	// _1 = Cast(_0 as *const [::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/])
-	var6 = var1.META * 40;
+	var6 = var1.META * 48;
 	// ^ Call( _6 = "size_of_val"::<[::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/],>( _1, ), bb1, bb3)
-	var5._0 = 0x8ull;	// _5 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x8 usize})
+	var5._0 = 0x10ull;	// _5 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x10 usize})
 	var4._0 = var6;
 	var4._1 = var5;	// _4 = Struct(::"core-0_0_0"::alloc::layout::Layout, {_6, _5})
 	var2 = & arg1;	// _2 = Borrow(Shared, a1)
@@ -10303,8 +10260,8 @@ static TUP_2_ZRTCu_ZRTCu  ZRG3cE9core0_0_05alloc6layout10size_align1gG2cK18proc_
 {
 	TUP_2_ZRTCu_ZRTCu rv;
 	;
-	rv._0 = 0x28ull;
-	rv._1 = 0x8ull;	// retval = Tuple(0x28 usize, 0x8 usize)
+	rv._0 = 0x30ull;
+	rv._1 = 0x10ull;	// retval = Tuple(0x30 usize, 0x10 usize)
 	return rv;
 	// ^ Return
 }
@@ -10700,7 +10657,7 @@ static RUST_BOOL  ZRG2cE9core0_0_010intrinsics23is_aligned_and_not_null1gG3c_A3m
 bb2: _Unwind_Resume(); // Diverge
 bb3:
 	var3 = (uintptr_t )arg0;	// _3 = Cast(a0 as usize)
-	var2 = var3 % 0x8ull;	// _2 = BinOp(_3 MOD 0x8 usize)
+	var2 = var3 % 0x10ull;	// _2 = BinOp(_3 MOD 0x10 usize)
 	rv = var2 == 0x0ull;	// retval = BinOp(_2 EQ 0x0 usize)
 	return rv;
 	// ^ Return
@@ -10764,7 +10721,7 @@ static RUST_BOOL  ZRG2cE9core0_0_010intrinsics23is_aligned_and_not_null1gG2cK18p
 bb2: _Unwind_Resume(); // Diverge
 bb3:
 	var3 = (uintptr_t )arg0;	// _3 = Cast(a0 as usize)
-	var2 = var3 % 0x8ull;	// _2 = BinOp(_3 MOD 0x8 usize)
+	var2 = var3 % 0x10ull;	// _2 = BinOp(_3 MOD 0x10 usize)
 	rv = var2 == 0x0ull;	// retval = BinOp(_2 EQ 0x0 usize)
 	return rv;
 	// ^ Return
@@ -12073,8 +12030,8 @@ static SLICE_PTR  ZRG3cE9core0_0_05slice3raw14from_raw_parts1gG2cK18proc_macro0_
 	// ^ If( _0 : 3, 5)
 bb2: _Unwind_Resume(); // Diverge
 bb3:
-	var5 = ZRICu14saturating_mul0g( 0x28ull, arg1 );
-	// ^ Call( _5 = <usize /*- */>::saturating_mul( 0x28 usize, a1, ), bb4, bb2)
+	var5 = ZRICu14saturating_mul0g( 0x30ull, arg1 );
+	// ^ Call( _5 = <usize /*- */>::saturating_mul( 0x30 usize, a1, ), bb4, bb2)
 	var0 = var5 <= 0x7fffffffffffffffull;	// _0 = BinOp(_5 LE 0x7fffffffffffffff usize)
 	if(var0) goto bb7; else goto bb8;
 	// ^ If( _0 : 7, 8)
@@ -12244,8 +12201,8 @@ static SLICE_PTR  ZRG3cE9core0_0_05slice3raw18from_raw_parts_mut1gG3c_A3mem12may
 	// ^ If( _0 : 3, 5)
 bb2: _Unwind_Resume(); // Diverge
 bb3:
-	var6 = ZRICu14saturating_mul0g( 0x28ull, arg1 );
-	// ^ Call( _6 = <usize /*- */>::saturating_mul( 0x28 usize, a1, ), bb4, bb2)
+	var6 = ZRICu14saturating_mul0g( 0x30ull, arg1 );
+	// ^ Call( _6 = <usize /*- */>::saturating_mul( 0x30 usize, a1, ), bb4, bb2)
 	var0 = var6 <= 0x7fffffffffffffffull;	// _0 = BinOp(_6 LE 0x7fffffffffffffff usize)
 	if(var0) goto bb7; else goto bb8;
 	// ^ If( _0 : 7, 8)
@@ -13483,7 +13440,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H112token_stream11TokenStream0g  ZRG3cK18proc_m
 	struct s_ZRG3cE9core0_0_03ptr6unique6Unique1gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g var84;	// ::"core-0_0_0"::ptr::unique::Unique<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>/*S*/
 	struct s_ZRG2cF10alloc0_0_05alloc6Global0g var85 = {0};	// ::"alloc-0_0_0"::alloc::Global/*S*/
 	struct s_ZRG2cF10alloc0_0_07raw_vec6RawVec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global0g var86;	// ::"alloc-0_0_0"::raw_vec::RawVec<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/
-	var81 = 0x8ull;	// _81 = Constant(0x8 usize)
+	var81 = 0x10ull;	// _81 = Constant(0x10 usize)
 	var82 = (struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g *)var81;	// _82 = Cast(_81 as *const ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/)
 	/* ZST assign */
 	var84._0 = var82;	// _84 = Struct(::"core-0_0_0"::ptr::unique::Unique<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>, {_82, _83})
@@ -16185,7 +16142,7 @@ bb1:
 	goto bb3;
 	// ^ Call( _8 = ::"core-0_0_0"::panicking::assert_failed_inner<'#local2,'#local3,'static,>( _3, _5, _7, _11, ), bb3, bb3)
 bb2:
-	rv = arg0 / 0x28ull;	// retval = BinOp(a0 DIV 0x28 usize)
+	rv = arg0 / 0x30ull;	// retval = BinOp(a0 DIV 0x30 usize)
 	return rv;
 	// ^ Return
 bb3: _Unwind_Resume(); // Diverge
@@ -16216,8 +16173,8 @@ bb1:
 	return rv;
 	// ^ Return
 bb2:
-	var4 = 0x28ull * arg0->_1;	// _4 = BinOp(0x28 usize MUL a0*.1)
-	var3._0 = 0x8ull;	// _3 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x8 usize})
+	var4 = 0x30ull * arg0->_1;	// _4 = BinOp(0x30 usize MUL a0*.1)
+	var3._0 = 0x10ull;	// _3 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x10 usize})
 	var2._0 = var4;
 	var2._1 = var3;	// _2 = Struct(::"core-0_0_0"::alloc::layout::Layout, {_4, _3})
 	var8 = arg0->_0;	// _8 = Use(a0*.0)
@@ -17640,9 +17597,9 @@ static struct s_ZRG3cE9core0_0_05alloc6layout6Layout0g  ZRIG3cE9core0_0_05alloc6
 {
 	struct s_ZRG3cE9core0_0_05alloc6layout6Layout0g rv;
 	struct s_ZRG3cE9core0_0_03num7nonzero12NonZeroUsize0g var0;	// ::"core-0_0_0"::num::nonzero::NonZeroUsize/*S*/
-	var0._0 = 0x8ull;	// _0 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x8 usize})
-	rv._0 = 0x28ull;
-	rv._1 = var0;	// retval = Struct(::"core-0_0_0"::alloc::layout::Layout, {0x28 usize, _0})
+	var0._0 = 0x10ull;	// _0 = Struct(::"core-0_0_0"::num::nonzero::NonZeroUsize, {0x10 usize})
+	rv._0 = 0x30ull;
+	rv._1 = var0;	// retval = Struct(::"core-0_0_0"::alloc::layout::Layout, {0x30 usize, _0})
 	return rv;
 	// ^ Return
 }
@@ -21103,12 +21060,12 @@ struct s_ZRG2cF10alloc0_0_03vec3Vec2gCaG2c_A5alloc6Global0g  ZRIG2cK18proc_macro
 	var5 = arg0;	// _5 = Borrow(Unique, a0*)
 	var0 = ZRIG2cK18proc_macro0_0_0_H18protocol6Reader1gG3cD15std0_0_0_H190002io5stdio9StdinLock0g9get_u128v0g( var5 );
 	// ^ Call( _0 = <::"proc_macro-0_0_0_H1"::protocol::Reader<::"std-0_0_0_H19000"::io::stdio::StdinLock<'#local5,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdinLock<'#local5,>/*S*/,>*/>::get_u128v<'#local0,>( _5, ), bb1, bb2)
-	var4 = 0 < cmp128(make128_raw(0ull, 1073741824ull), var0);	// _4 = BinOp(_0 LT 0x40000000 u128)
+	var4 = var0 < (uint128_t)0x40000000ull;	// _4 = BinOp(_0 LT 0x40000000 u128)
 	if(var4) goto bb3; else goto bb7;
 	// ^ If( _4 : 3, 7)
 bb2: _Unwind_Resume(); // Diverge
 bb3:
-	var1 = var0.lo;	// _1 = Cast(_0 as usize)
+	var1 = (uintptr_t )var0;	// _1 = Cast(_0 as usize)
 	/* ZST assign */
 	{
 		struct s_ZRG2cF10alloc0_0_05alloc6Global0g zarg2 = {0};
@@ -21228,21 +21185,21 @@ int128_t  ZRIG2cK18proc_macro0_0_0_H18protocol6Reader1gG3cD15std0_0_0_H190002io5
 	uint128_t var6;	// u128
 	var0 = ZRIG2cK18proc_macro0_0_0_H18protocol6Reader1gG3cD15std0_0_0_H190002io5stdio9StdinLock0g9get_u128v0g( arg0 );
 	// ^ Call( _0 = <::"proc_macro-0_0_0_H1"::protocol::Reader<::"std-0_0_0_H19000"::io::stdio::StdinLock<'#local5,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdinLock<'#local5,>/*S*/,>*/>::get_u128v<'#local0,>( a0, ), bb1, bb2)
-	var2 = and128(var0, make128_raw(0ull, 1ull));	// _2 = BinOp(_0 BIT_AND 0x1 u128)
-	var1 = 0 != cmp128(make128_raw(0ull, 0ull), var2);	// _1 = BinOp(_2 NE 0x0 u128)
+	var2 = var0 & (uint128_t)0x1ull;	// _2 = BinOp(_0 BIT_AND 0x1 u128)
+	var1 = var2 != (uint128_t)0x0ull;	// _1 = BinOp(_2 NE 0x0 u128)
 	if(var1) goto bb3; else goto bb4;
 	// ^ If( _1 : 3, 4)
 bb2: _Unwind_Resume(); // Diverge
 bb3:
-	var4 = shr128(var0, 1);	// _4 = BinOp(_0 BIT_SHR +1 i32)
-	var5.lo = var4.lo; var5.hi = var4.hi;	// _5 = Cast(_4 as i128)
-	var3 = add128s(var5, make128s_raw(0ull, 1ull));	// _3 = BinOp(_5 ADD +1 i128)
-	rv = neg128s(var3);	// retval = UniOp(_3 NEG)
+	var4 = var0 >> 1;	// _4 = BinOp(_0 BIT_SHR +1 i32)
+	var5 = (int128_t )var4;	// _5 = Cast(_4 as i128)
+	var3 = var5 + (int128_t)1ll;	// _3 = BinOp(_5 ADD +1 i128)
+	rv = -var3;	// retval = UniOp(_3 NEG)
 	return rv;
 	// ^ Return
 bb4:
-	var6 = shr128(var0, 1);	// _6 = BinOp(_0 BIT_SHR +1 i32)
-	rv.lo = var6.lo; rv.hi = var6.hi;	// retval = Cast(_6 as i128)
+	var6 = var0 >> 1;	// _6 = BinOp(_0 BIT_SHR +1 i32)
+	rv = (int128_t )var6;	// retval = Cast(_6 as i128)
 	return rv;
 	// ^ Return
 }
@@ -21283,7 +21240,7 @@ uint128_t  ZRIG2cK18proc_macro0_0_0_H18protocol6Reader1gG3cD15std0_0_0_H190002io
 	uint128_t var8;	// u128
 	tUNIT var9 = {0};	// ()
 	var0 = 0;	// _0 = Constant(+0 i32)
-	var1 = make128_raw(0ull, 0ull);	// _1 = Constant(0x0 u128)
+	var1 = (uint128_t)0x0ull;	// _1 = Constant(0x0 u128)
 	// ^ Goto(1)
 bb1:
 	var4 = arg0;	// _4 = Borrow(Unique, a0*)
@@ -21292,9 +21249,9 @@ bb1:
 	var2 = ZRIG2cE9core0_0_06option6Option1gCa6unwrap0g( var5 );
 	// ^ Call( _2 = <::"core-0_0_0"::option::Option<u8,>/*E*/ /*- <u8,>*/>::unwrap( _5, ), bb3, bb4)
 	var7 = var2 & 0x7f;	// _7 = BinOp(_2 BIT_AND 0x7f u8)
-	var8.lo = var7; var8.hi = var7 < 0 ? -1 : 0;	// _8 = Cast(_7 as u128)
-	var6 = shl128(var8, var0);	// _6 = BinOp(_8 BIT_SHL _0)
-	var1 = or128(var1, var6);	// _1 = BinOp(_1 BIT_OR _6)
+	var8 = (uint128_t )var7;	// _8 = Cast(_7 as u128)
+	var6 = var8 << var0;	// _6 = BinOp(_8 BIT_SHL _0)
+	var1 = var1 | var6;	// _1 = BinOp(_1 BIT_OR _6)
 	var3 = var2 < 0x80;	// _3 = BinOp(_2 LT 0x80 u8)
 	if(var3) goto bb5; else goto bb6;
 	// ^ If( _3 : 5, 6)
@@ -21530,7 +21487,7 @@ bb17:
 	var17 = arg0;	// _17 = Borrow(Unique, a0*)
 	var18 = ZRIG2cK18proc_macro0_0_0_H18protocol6Reader1gG3cD15std0_0_0_H190002io5stdio9StdinLock0g9get_i128v0g( var17 );
 	// ^ Call( _18 = <::"proc_macro-0_0_0_H1"::protocol::Reader<::"std-0_0_0_H19000"::io::stdio::StdinLock<'#local5,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdinLock<'#local5,>/*S*/,>*/>::get_i128v<'#local0,>( _17, ), bb18, bb2)
-	var19 = var18.lo;	// _19 = Cast(_18 as u32)
+	var19 = (uint32_t )var18;	// _19 = Cast(_18 as u32)
 	var20 = ZRG3cE9core0_0_04char7convert8from_u320g( var19 );
 	// ^ Call( _20 = ::"core-0_0_0"::char::convert::from_u32( _19, ), bb19, bb2)
 	var21 = ZRIG2cE9core0_0_06option6Option1gCx6expect0g( var20, make_sliceptr("char lit", 8) );
@@ -21749,7 +21706,7 @@ void  ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdi
 	var8.var_0 = var7;	// _8 = UnionVariant(::"core-0_0_0"::ptr::metadata::PtrRepr<[u8],> #0, _7)
 	var6 = var8.var_2._1;	// _6 = Use(_8#2.1)
 	// ^ drop(_8)
-	var1.lo = var6; var1.hi = var6 < 0 ? -1 : 0;	// _1 = Cast(_6 as u128)
+	var1 = (uint128_t )var6;	// _1 = Cast(_6 as u128)
 	ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdio10StdoutLock0g9put_u128v0g( var0, var1 );
 	// ^ Call( _2 = <::"proc_macro-0_0_0_H1"::protocol::Writer<::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>*/>::put_u128v<'#local1,>( _0, _1, ), bb1, bb4)
 	var3 = & arg0->_0;	// _3 = Borrow(Unique, a0*.0)
@@ -21811,22 +21768,22 @@ void  ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdi
 	uint128_t var8;	// u128
 	uint128_t var9;	// u128
 	tUNIT var10 = {0};	// ()
-	var0 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg1);	// _0 = BinOp(a1 LT +0 i128)
+	var0 = arg1 < (int128_t)0ll;	// _0 = BinOp(a1 LT +0 i128)
 	if(var0) goto bb1; else goto bb2;
 	// ^ If( _0 : 1, 2)
 bb1:
 	var1 = arg0;	// _1 = Borrow(Unique, a0*)
-	var3 = add128s(arg1, make128s_raw(0ull, 1ull));	// _3 = BinOp(a1 ADD +1 i128)
-	var4.lo = var3.lo; var4.hi = var3.hi;	// _4 = Cast(_3 as u128)
-	var2 = shl128(var4, 1);	// _2 = BinOp(_4 BIT_SHL +1 i32)
-	var5 = or128(var2, make128_raw(0ull, 1ull));	// _5 = BinOp(_2 BIT_OR 0x1 u128)
+	var3 = arg1 + (int128_t)1ll;	// _3 = BinOp(a1 ADD +1 i128)
+	var4 = (uint128_t )var3;	// _4 = Cast(_3 as u128)
+	var2 = var4 << 1;	// _2 = BinOp(_4 BIT_SHL +1 i32)
+	var5 = var2 | (uint128_t)0x1ull;	// _5 = BinOp(_2 BIT_OR 0x1 u128)
 	ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdio10StdoutLock0g9put_u128v0g( var1, var5 );
 	goto bb3;
 	// ^ Call( _6 = <::"proc_macro-0_0_0_H1"::protocol::Writer<::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>*/>::put_u128v<'#local0,>( _1, _5, ), bb3, bb4)
 bb2:
 	var7 = arg0;	// _7 = Borrow(Unique, a0*)
-	var8.lo = arg1.lo; var8.hi = arg1.hi;	// _8 = Cast(a1 as u128)
-	var9 = shl128(var8, 1);	// _9 = BinOp(_8 BIT_SHL +1 i32)
+	var8 = (uint128_t )arg1;	// _8 = Cast(a1 as u128)
+	var9 = var8 << 1;	// _9 = BinOp(_8 BIT_SHL +1 i32)
 	ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdio10StdoutLock0g9put_u128v0g( var7, var9 );
 	// ^ Call( _10 = <::"proc_macro-0_0_0_H1"::protocol::Writer<::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>*/>::put_u128v<'#local0,>( _7, _9, ), bb3, bb4)
 bb3:
@@ -21856,23 +21813,23 @@ void  ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdi
 	tUNIT var9 = {0};	// ()
 	// ^ Goto(1)
 bb1:
-	var0 = 0 >= cmp128(make128_raw(0ull, 128ull), arg1);	// _0 = BinOp(a1 GE 0x80 u128)
+	var0 = arg1 >= (uint128_t)0x80ull;	// _0 = BinOp(a1 GE 0x80 u128)
 	if(var0) goto bb2; else goto bb4;
 	// ^ If( _0 : 2, 4)
 bb2:
 	var1 = arg0;	// _1 = Borrow(Unique, a0*)
-	var2 = and128(arg1, make128_raw(0ull, 127ull));	// _2 = BinOp(a1 BIT_AND 0x7f u128)
-	var3 = var2.lo;	// _3 = Cast(_2 as u8)
+	var2 = arg1 & (uint128_t)0x7full;	// _2 = BinOp(a1 BIT_AND 0x7f u128)
+	var3 = (uint8_t )var2;	// _3 = Cast(_2 as u8)
 	var4 = var3 | 0x80;	// _4 = BinOp(_3 BIT_OR 0x80 u8)
 	ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdio10StdoutLock0g4putb0g( var1, var4 );
 	// ^ Call( _5 = <::"proc_macro-0_0_0_H1"::protocol::Writer<::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>*/>::putb<'#local0,>( _1, _4, ), bb3, bb6)
-	arg1 = shr128(arg1, 7);	// a1 = BinOp(a1 BIT_SHR +7 i32)
+	arg1 = arg1 >> 7;	// a1 = BinOp(a1 BIT_SHR +7 i32)
 	goto bb1;
 	// ^ Goto(1)
 bb4:
 	var6 = arg0;	// _6 = Borrow(Unique, a0*)
-	var7 = and128(arg1, make128_raw(0ull, 127ull));	// _7 = BinOp(a1 BIT_AND 0x7f u128)
-	var8 = var7.lo;	// _8 = Cast(_7 as u8)
+	var7 = arg1 & (uint128_t)0x7full;	// _7 = BinOp(a1 BIT_AND 0x7f u128)
+	var8 = (uint8_t )var7;	// _8 = Cast(_7 as u8)
 	ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdio10StdoutLock0g4putb0g( var6, var8 );
 	// ^ Call( _9 = <::"proc_macro-0_0_0_H1"::protocol::Writer<::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>*/>::putb<'#local0,>( _6, _8, ), bb5, bb6)
 	/* ZST assign */
@@ -22094,7 +22051,7 @@ bb21:
 	// ^ Call( _29 = <::"proc_macro-0_0_0_H1"::protocol::Writer<::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>*/>::putb<'#local0,>( _28, 0x5 u8, ), bb22, bb34)
 	var30 = arg0;	// _30 = Borrow(Unique, a0*)
 	var31 = (uint32_t )var5;	// _31 = Cast(_5 as u32)
-	var32.lo = var31; var32.hi = var31 < 0 ? -1 : 0;	// _32 = Cast(_31 as u128)
+	var32 = (uint128_t )var31;	// _32 = Cast(_31 as u128)
 	ZRIG2cK18proc_macro0_0_0_H18protocol6Writer1gG3cD15std0_0_0_H190002io5stdio10StdoutLock0g9put_u128v0g( var30, var32 );
 	goto bb32;
 	// ^ Call( _33 = <::"proc_macro-0_0_0_H1"::protocol::Writer<::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>/*S*/ /*- <::"std-0_0_0_H19000"::io::stdio::StdoutLock<'#local13,>/*S*/,>*/>::put_u128v<'#local0,>( _30, _32, ), bb32, bb34)
@@ -22295,7 +22252,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H112token_stream11TokenStream0g  ZRIG2cK18proc_
 	uintptr_t var5;	// usize
 	struct s_ZRG2cF10alloc0_0_05alloc6Global0g var6 = {0};	// ::"alloc-0_0_0"::alloc::Global/*S*/
 	struct s_ZRG2cF10alloc0_0_07raw_vec6RawVec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global0g var7;	// ::"alloc-0_0_0"::raw_vec::RawVec<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/
-	var1 = 0x8ull;	// _1 = Constant(0x8 usize)
+	var1 = 0x10ull;	// _1 = Constant(0x10 usize)
 	var2 = (struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g *)var1;	// _2 = Cast(_1 as *const ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/)
 	/* ZST assign */
 	var4._0 = var2;	// _4 = Struct(::"core-0_0_0"::ptr::unique::Unique<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>, {_2, _3})
@@ -22631,7 +22588,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22650,7 +22607,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22669,7 +22626,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22688,7 +22645,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22707,7 +22664,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22726,7 +22683,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22745,7 +22702,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22764,7 +22721,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22783,7 +22740,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22802,7 +22759,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var0 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var1;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	int128_t var2;	// i128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as i128)
+	var2 = (int128_t )arg0;	// _2 = Cast(a0 as i128)
 	/* ZST assign */
 	var1.DATA.TAG = 4;
 	var1.DATA.var_4._0 = var2;
@@ -22936,7 +22893,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -22955,7 +22912,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -22974,7 +22931,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -22993,7 +22950,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -23012,7 +22969,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -23031,7 +22988,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -23050,7 +23007,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -23069,7 +23026,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -23088,7 +23045,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -23107,7 +23064,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H110token_tree7Literal0g  ZRIG2cK18proc_macro0_
 	struct e_ZRG2cK18proc_macro0_0_0_H110token_tree12LiteralValue0g var0;	// ::"proc_macro-0_0_0_H1"::token_tree::LiteralValue/*E*/
 	struct s_ZRG2cK18proc_macro0_0_0_H14span4Span0g var1 = {0};	// ::"proc_macro-0_0_0_H1"::span::Span/*S*/
 	uint128_t var2;	// u128
-	var2.lo = arg0; var2.hi = arg0 < 0 ? -1 : 0;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	/* ZST assign */
 	var0.DATA.TAG = 3;
 	var0.DATA.var_3._0 = var2;
@@ -25504,7 +25461,7 @@ static RUST_BOOL  ZRQCi2cE9core0_0_03cmp9PartialEq1gCi2eq0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 == cmp128((*arg1), (*arg0));	// retval = BinOp(a0* EQ a1*)
+	rv = (*arg0) == (*arg1);	// retval = BinOp(a0* EQ a1*)
 	return rv;
 	// ^ Return
 }
@@ -25516,7 +25473,7 @@ static RUST_BOOL  ZRQCi2cE9core0_0_03cmp10PartialOrd1gCi2ge0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 >= cmp128((*arg1), (*arg0));	// retval = BinOp(a0* GE a1*)
+	rv = (*arg0) >= (*arg1);	// retval = BinOp(a0* GE a1*)
 	return rv;
 	// ^ Return
 }
@@ -25577,7 +25534,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops5arith3Div1gCi3div0g(
 
 {
 	uint128_t rv;
-	rv = div128(arg0, arg1);	// retval = BinOp(a0 DIV a1)
+	rv = arg0 / arg1;	// retval = BinOp(a0 DIV a1)
 	return rv;
 	// ^ Return
 }
@@ -25589,7 +25546,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops5arith3Rem1gCi3rem0g(
 
 {
 	uint128_t rv;
-	rv = mod128(arg0, arg1);	// retval = BinOp(a0 MOD a1)
+	rv = arg0 % arg1;	// retval = BinOp(a0 MOD a1)
 	return rv;
 	// ^ Return
 }
@@ -25601,7 +25558,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops5arith3Sub1gCi3sub0g(
 
 {
 	uint128_t rv;
-	rv = sub128(arg0, arg1);	// retval = BinOp(a0 SUB a1)
+	rv = arg0 - arg1;	// retval = BinOp(a0 SUB a1)
 	return rv;
 	// ^ Return
 }
@@ -25626,7 +25583,7 @@ static struct e_ZRG2cE9core0_0_06result6Result2gT0G2c_A3fmt5Error0g  ZRQCj2cE9co
 	if(var0) goto bb1; else goto bb2;
 	// ^ If( _0 : 1, 2)
 bb1:
-	var3.lo = (*arg0).lo; var3.hi = (*arg0).hi;	// _3 = Cast(a0* as u128)
+	var3 = (uint128_t )(*arg0);	// _3 = Cast(a0* as u128)
 	var4 = arg1;	// _4 = Borrow(Unique, a1*)
 	rv = ZRQG3cE9core0_0_03fmt3num8LowerHex0g3c_A_B_C12GenericRadix0g7fmt_int1gCi( &ZRG3cE9core0_0_03fmt3numG8lifted220g.val, var3, var4 );
 	goto bb5;
@@ -25637,7 +25594,7 @@ bb2:
 	if(var0) goto bb3; else goto bb4;
 	// ^ If( _0 : 3, 4)
 bb3:
-	var6.lo = (*arg0).lo; var6.hi = (*arg0).hi;	// _6 = Cast(a0* as u128)
+	var6 = (uint128_t )(*arg0);	// _6 = Cast(a0* as u128)
 	var7 = arg1;	// _7 = Borrow(Unique, a1*)
 	rv = ZRQG3cE9core0_0_03fmt3num8UpperHex0g3c_A_B_C12GenericRadix0g7fmt_int1gCi( &ZRG3cE9core0_0_03fmt3numG8lifted460g.val, var6, var7 );
 	goto bb5;
@@ -28491,7 +28448,7 @@ static struct e_ZRG2cE9core0_0_06result6Result2gT0G2c_A3fmt5Error0g  ZRQG3cE9cor
 	bool df1 = 0;
 	var0 = ZRQCi3cE9core0_0_03fmt3num10DisplayInt0g4zero0g( );
 	// ^ Call( _0 = <u128 as ::"core-0_0_0"::fmt::num::DisplayInt>::zero( ), bb1, bb3)
-	var1 = 0 >= cmp128(var0, arg1);	// _1 = BinOp(a1 GE _0)
+	var1 = arg1 >= var0;	// _1 = BinOp(a1 GE _0)
 	/* ZST assign */
 	var13.var_0 = var29;	// _13 = UnionVariant(::"core-0_0_0"::mem::maybe_uninit::MaybeUninit<u8,> #0, _29)
 	for(unsigned int i = 0; i < 128; i ++)
@@ -28546,10 +28503,10 @@ bb10:
 	// ^ Switch( _24 : 0 => bb17, 1 => bb12, )
 bb12:
 	var9 = var24.DATA.var_1._0;	// _9 = Use(_24#1.0)
-	var51 = mod128(arg1, var4);	// _51 = BinOp(a1 MOD _4)
-	var10 = sub128(var0, var51);	// _10 = BinOp(_0 SUB _51)
+	var51 = arg1 % var4;	// _51 = BinOp(a1 MOD _4)
+	var10 = var0 - var51;	// _10 = BinOp(_0 SUB _51)
 	var52 = arg1;	// _52 = Use(a1)
-	arg1 = div128(var52, var4);	// a1 = BinOp(_52 DIV _4)
+	arg1 = var52 / var4;	// a1 = BinOp(_52 DIV _4)
 	var25 = var9;	// _25 = Borrow(Unique, _9*)
 	var26 = & var10;	// _26 = Borrow(Shared, _10)
 	var27 = ZRQCi3cE9core0_0_03fmt3num10DisplayInt0g5to_u80g( var26 );
@@ -28562,7 +28519,7 @@ bb12:
 	// ^ Call( _54 = "assert_inhabited"::<u8,>( ), bb15, bb3)
 	// ^ drop(_25)
 	var3 = var3 - 0x1ull;	// _3 = BinOp(_3 SUB 0x1 usize)
-	var12 = 0 == cmp128(var0, arg1);	// _12 = BinOp(a1 EQ _0)
+	var12 = arg1 == var0;	// _12 = BinOp(a1 EQ _0)
 	if(var12) goto bb16; else goto bb23;
 	// ^ If( _12 : 16, 23)
 bb16:
@@ -28607,9 +28564,9 @@ bb23:
 	// ^ Goto(10)
 bb24:
 	var6 = var18.DATA.var_1._0;	// _6 = Use(_18#1.0)
-	var7 = mod128(arg1, var4);	// _7 = BinOp(a1 MOD _4)
+	var7 = arg1 % var4;	// _7 = BinOp(a1 MOD _4)
 	var56 = arg1;	// _56 = Use(a1)
-	arg1 = div128(var56, var4);	// a1 = BinOp(_56 DIV _4)
+	arg1 = var56 / var4;	// a1 = BinOp(_56 DIV _4)
 	var19 = var6;	// _19 = Borrow(Unique, _6*)
 	var20 = & var7;	// _20 = Borrow(Shared, _7)
 	var21 = ZRQCi3cE9core0_0_03fmt3num10DisplayInt0g5to_u80g( var20 );
@@ -28622,7 +28579,7 @@ bb24:
 	// ^ Call( _58 = "assert_inhabited"::<u8,>( ), bb27, bb3)
 	// ^ drop(_19)
 	var3 = var3 - 0x1ull;	// _3 = BinOp(_3 SUB 0x1 usize)
-	var12 = 0 == cmp128(var0, arg1);	// _12 = BinOp(a1 EQ _0)
+	var12 = arg1 == var0;	// _12 = BinOp(a1 EQ _0)
 	if(var12) goto bb28; else goto bb30;
 	// ^ If( _12 : 28, 30)
 bb28:
@@ -29367,7 +29324,7 @@ static struct e_ZRG2cE9core0_0_06result6Result2gT0G2c_A3fmt5Error0g  ZRQG3cE9cor
 	bool df1 = 0;
 	var0 = ZRQCi3cE9core0_0_03fmt3num10DisplayInt0g4zero0g( );
 	// ^ Call( _0 = <u128 as ::"core-0_0_0"::fmt::num::DisplayInt>::zero( ), bb1, bb3)
-	var1 = 0 >= cmp128(var0, arg1);	// _1 = BinOp(a1 GE _0)
+	var1 = arg1 >= var0;	// _1 = BinOp(a1 GE _0)
 	/* ZST assign */
 	var13.var_0 = var29;	// _13 = UnionVariant(::"core-0_0_0"::mem::maybe_uninit::MaybeUninit<u8,> #0, _29)
 	for(unsigned int i = 0; i < 128; i ++)
@@ -29422,10 +29379,10 @@ bb10:
 	// ^ Switch( _24 : 0 => bb17, 1 => bb12, )
 bb12:
 	var9 = var24.DATA.var_1._0;	// _9 = Use(_24#1.0)
-	var51 = mod128(arg1, var4);	// _51 = BinOp(a1 MOD _4)
-	var10 = sub128(var0, var51);	// _10 = BinOp(_0 SUB _51)
+	var51 = arg1 % var4;	// _51 = BinOp(a1 MOD _4)
+	var10 = var0 - var51;	// _10 = BinOp(_0 SUB _51)
 	var52 = arg1;	// _52 = Use(a1)
-	arg1 = div128(var52, var4);	// a1 = BinOp(_52 DIV _4)
+	arg1 = var52 / var4;	// a1 = BinOp(_52 DIV _4)
 	var25 = var9;	// _25 = Borrow(Unique, _9*)
 	var26 = & var10;	// _26 = Borrow(Shared, _10)
 	var27 = ZRQCi3cE9core0_0_03fmt3num10DisplayInt0g5to_u80g( var26 );
@@ -29438,7 +29395,7 @@ bb12:
 	// ^ Call( _54 = "assert_inhabited"::<u8,>( ), bb15, bb3)
 	// ^ drop(_25)
 	var3 = var3 - 0x1ull;	// _3 = BinOp(_3 SUB 0x1 usize)
-	var12 = 0 == cmp128(var0, arg1);	// _12 = BinOp(a1 EQ _0)
+	var12 = arg1 == var0;	// _12 = BinOp(a1 EQ _0)
 	if(var12) goto bb16; else goto bb23;
 	// ^ If( _12 : 16, 23)
 bb16:
@@ -29483,9 +29440,9 @@ bb23:
 	// ^ Goto(10)
 bb24:
 	var6 = var18.DATA.var_1._0;	// _6 = Use(_18#1.0)
-	var7 = mod128(arg1, var4);	// _7 = BinOp(a1 MOD _4)
+	var7 = arg1 % var4;	// _7 = BinOp(a1 MOD _4)
 	var56 = arg1;	// _56 = Use(a1)
-	arg1 = div128(var56, var4);	// a1 = BinOp(_56 DIV _4)
+	arg1 = var56 / var4;	// a1 = BinOp(_56 DIV _4)
 	var19 = var6;	// _19 = Borrow(Unique, _6*)
 	var20 = & var7;	// _20 = Borrow(Shared, _7)
 	var21 = ZRQCi3cE9core0_0_03fmt3num10DisplayInt0g5to_u80g( var20 );
@@ -29498,7 +29455,7 @@ bb24:
 	// ^ Call( _58 = "assert_inhabited"::<u8,>( ), bb27, bb3)
 	// ^ drop(_19)
 	var3 = var3 - 0x1ull;	// _3 = BinOp(_3 SUB 0x1 usize)
-	var12 = 0 == cmp128(var0, arg1);	// _12 = BinOp(a1 EQ _0)
+	var12 = arg1 == var0;	// _12 = BinOp(a1 EQ _0)
 	if(var12) goto bb28; else goto bb30;
 	// ^ If( _12 : 28, 30)
 bb28:
@@ -33071,8 +33028,8 @@ struct s_ZRG2cK18proc_macro0_0_0_H112token_stream11TokenStream0g  ZRQG2cK18proc_
 	struct s_ZRG2cE9core0_0_06marker11PhantomData1gSG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g var5 = {0};	// ::"core-0_0_0"::marker::PhantomData<[::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/],>/*S*/
 	struct s_ZRG3cE9core0_0_03ptr6unique6Unique1gSG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g var6;	// ::"core-0_0_0"::ptr::unique::Unique<[::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/],>/*S*/
 	struct s_ZRG2cF10alloc0_0_03vec3Vec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global0g var7;	// ::"alloc-0_0_0"::vec::Vec<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/
-	var0 = ZRG2cF10alloc0_0_05alloc15exchange_malloc0g( 0x28ull, 0x8ull );
-	// ^ Call( _0 = ::"alloc-0_0_0"::alloc::exchange_malloc( 0x28 usize, 0x8 usize, ), bb1, bb4)
+	var0 = ZRG2cF10alloc0_0_05alloc15exchange_malloc0g( 0x30ull, 0x10ull );
+	// ^ Call( _0 = ::"alloc-0_0_0"::alloc::exchange_malloc( 0x30 usize, 0x10 usize, ), bb1, bb4)
 	var1 = (t_ZRTA1G2cK18proc_macro0_0_0_H110token_tree9TokenTree0g *)var0;	// _1 = Cast(_0 as *mut [::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/; 1])
 	(*var1).DATA[0] = arg0;	// _1* = Array(a0)
 	memcpy( &var2, &var1, sizeof(struct s_ZRG2cF10alloc0_0_05boxed3Box2gA1G2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global0g ));
@@ -33101,7 +33058,7 @@ struct s_ZRG2cK18proc_macro0_0_0_H112token_stream11TokenStream0g  ZRQG2cK18proc_
 	uintptr_t var5;	// usize
 	struct s_ZRG2cF10alloc0_0_05alloc6Global0g var6 = {0};	// ::"alloc-0_0_0"::alloc::Global/*S*/
 	struct s_ZRG2cF10alloc0_0_07raw_vec6RawVec2gG2cK18proc_macro0_0_0_H110token_tree9TokenTree0gG2c_A5alloc6Global0g var7;	// ::"alloc-0_0_0"::raw_vec::RawVec<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,::"alloc-0_0_0"::alloc::Global/*S*/,>/*S*/
-	var1 = 0x8ull;	// _1 = Constant(0x8 usize)
+	var1 = 0x10ull;	// _1 = Constant(0x10 usize)
 	var2 = (struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g *)var1;	// _2 = Cast(_1 as *const ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/)
 	/* ZST assign */
 	var4._0 = var2;	// _4 = Struct(::"core-0_0_0"::ptr::unique::Unique<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>, {_2, _3})
@@ -33884,7 +33841,7 @@ bb4:
 	ZRG3cD15std0_0_0_H190002io5stdio7_eprint0g( var219 );
 	// ^ Call( _37 = ::"std-0_0_0_H19000"::io::stdio::_eprint<'#local74,>( _219, ), bb6, bb3)
 bb6:
-	var445 = 0x8ull;	// _445 = Constant(0x8 usize)
+	var445 = 0x10ull;	// _445 = Constant(0x10 usize)
 	var446 = (struct e_ZRG2cK18proc_macro0_0_0_H110token_tree9TokenTree0g *)var445;	// _446 = Cast(_445 as *const ::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/)
 	/* ZST assign */
 	var448._0 = var446;	// _448 = Struct(::"core-0_0_0"::ptr::unique::Unique<::"proc_macro-0_0_0_H1"::token_tree::TokenTree/*E*/,>, {_446, _447})
@@ -34287,7 +34244,7 @@ bb84:
 	var15 = 0xa;	// _15 = Constant(0xa u32)
 	// ^ Goto(85)
 bb85:
-	var16 = make128_raw(0ull, 0ull);	// _16 = Constant(0x0 u128)
+	var16 = (uint128_t)0x0ull;	// _16 = Constant(0x0 u128)
 	var17 = ZRIG2cE9core0_0_06option6Option1gCx6expect0g( var1._1, make_sliceptr("CharStream::cur called with no current", 38) );
 	// ^ Call( _17 = <::"core-0_0_0"::option::Option<char,>/*E*/ /*- <char,>*/>::expect<'static,>( _1.1, "CharStream::cur called with no current", ), bb86, bb3)
 bb86:
@@ -34369,10 +34326,10 @@ bb97:
 	if(var30) goto bb102; else goto bb100;
 	// ^ If( _30 : 102, 100)
 bb98:
-	var169.lo = var15; var169.hi = var15 < 0 ? -1 : 0;	// _169 = Cast(_15 as u128)
-	var16 = mul128(var16, var169);	// _16 = BinOp(_16 MUL _169)
-	var170.lo = var168.DATA.var_1._0; var170.hi = var168.DATA.var_1._0 < 0 ? -1 : 0;	// _170 = Cast(_168#1.0 as u128)
-	var16 = add128(var16, var170);	// _16 = BinOp(_16 ADD _170)
+	var169 = (uint128_t )var15;	// _169 = Cast(_15 as u128)
+	var16 = var16 * var169;	// _16 = BinOp(_16 MUL _169)
+	var170 = (uint128_t )var168.DATA.var_1._0;	// _170 = Cast(_168#1.0 as u128)
+	var16 = var16 + var170;	// _16 = BinOp(_16 ADD _170)
 	var171 = & var1;	// _171 = Borrow(Unique, _1)
 	var387 = & var171->_0;	// _387 = Borrow(Unique, _171*.0)
 	var171->_1 = ZRQG4cE9core0_0_04iter8adapters8peekable8Peekable1gG3c_A3str_B5Chars0g4c_A_B6traits8iterator8Iterator0g4next0g( var387 );
@@ -34403,7 +34360,7 @@ bb102:
 	goto bb3;
 	// ^ Call( _173 = ::"std-0_0_0_H19000"::panicking::begin_panic<&'M0 str,>( "TODO: Floating point", ), bb3, bb3)
 bb103:
-	var379.lo = var16.lo; var379.hi = var16.hi;	// _379 = Cast(_16 as i128)
+	var379 = (int128_t )var16;	// _379 = Cast(_16 as i128)
 	/* ZST assign */
 	var377.DATA.TAG = 4;
 	var377.DATA.var_4._0 = var379;
@@ -34412,7 +34369,7 @@ bb103:
 	goto bb115;
 	// ^ Goto(115)
 bb104:
-	var364.lo = var16.lo; var364.hi = var16.hi;	// _364 = Cast(_16 as i128)
+	var364 = (int128_t )var16;	// _364 = Cast(_16 as i128)
 	/* ZST assign */
 	var362.DATA.TAG = 4;
 	var362.DATA.var_4._0 = var364;
@@ -34421,7 +34378,7 @@ bb104:
 	goto bb115;
 	// ^ Goto(115)
 bb105:
-	var369.lo = var16.lo; var369.hi = var16.hi;	// _369 = Cast(_16 as i128)
+	var369 = (int128_t )var16;	// _369 = Cast(_16 as i128)
 	/* ZST assign */
 	var367.DATA.TAG = 4;
 	var367.DATA.var_4._0 = var369;
@@ -34430,7 +34387,7 @@ bb105:
 	goto bb115;
 	// ^ Goto(115)
 bb106:
-	var374.lo = var16.lo; var374.hi = var16.hi;	// _374 = Cast(_16 as i128)
+	var374 = (int128_t )var16;	// _374 = Cast(_16 as i128)
 	/* ZST assign */
 	var372.DATA.TAG = 4;
 	var372.DATA.var_4._0 = var374;
@@ -34439,7 +34396,7 @@ bb106:
 	goto bb115;
 	// ^ Goto(115)
 bb107:
-	var359.lo = var16.lo; var359.hi = var16.hi;	// _359 = Cast(_16 as i128)
+	var359 = (int128_t )var16;	// _359 = Cast(_16 as i128)
 	/* ZST assign */
 	var357.DATA.TAG = 4;
 	var357.DATA.var_4._0 = var359;
@@ -34448,7 +34405,7 @@ bb107:
 	goto bb115;
 	// ^ Goto(115)
 bb108:
-	var384.lo = var16.lo; var384.hi = var16.hi;	// _384 = Cast(_16 as i128)
+	var384 = (int128_t )var16;	// _384 = Cast(_16 as i128)
 	/* ZST assign */
 	var382.DATA.TAG = 4;
 	var382.DATA.var_4._0 = var384;
@@ -34520,7 +34477,7 @@ bb118:
 	var157 = & var0;	// _157 = Borrow(Unique, _0)
 	/* ZST assign */
 	var338.DATA.TAG = 3;
-	var338.DATA.var_3._0 = make128_raw(0ull, 0ull);
+	var338.DATA.var_3._0 = (uint128_t)0x0ull;
 	var338.DATA.var_3._1 = 0x0;	// _338 = Variant(::"proc_macro-0_0_0_H1"::token_tree::LiteralValue #3, {0x0 u128, 0x0 u8})
 	var337._1 = var338;	// _337 = Struct(::"proc_macro-0_0_0_H1"::token_tree::Literal, {_339, _338})
 	var340.DATA.TAG = 3;
@@ -36527,7 +36484,7 @@ bb12:
 	var7 = & (*var11._1).DATA.var_4._1;	// _7 = Borrow(Shared, _11.1*#4.1)
 	var13 = & (*var11._1).DATA.var_4._0;	// _13 = Borrow(Shared, _11.1*#4.0)
 	var6 = & (*var11._0).DATA.var_4._1;	// _6 = Borrow(Shared, _11.0*#4.1)
-	var10 = 0 != cmp128s((*var13), (*var11._0).DATA.var_4._0);	// _10 = BinOp(_11.0*#4.0 NE _13*)
+	var10 = (*var11._0).DATA.var_4._0 != (*var13);	// _10 = BinOp(_11.0*#4.0 NE _13*)
 	if(var10) goto bb10; else goto bb13;
 	// ^ If( _10 : 10, 13)
 bb13:
@@ -36538,7 +36495,7 @@ bb14:
 	var5 = & (*var11._1).DATA.var_3._1;	// _5 = Borrow(Shared, _11.1*#3.1)
 	var12 = & (*var11._1).DATA.var_3._0;	// _12 = Borrow(Shared, _11.1*#3.0)
 	var4 = & (*var11._0).DATA.var_3._1;	// _4 = Borrow(Shared, _11.0*#3.1)
-	var10 = 0 != cmp128((*var12), (*var11._0).DATA.var_3._0);	// _10 = BinOp(_11.0*#3.0 NE _12*)
+	var10 = (*var11._0).DATA.var_3._0 != (*var12);	// _10 = BinOp(_11.0*#3.0 NE _12*)
 	if(var10) goto bb10; else goto bb15;
 	// ^ If( _10 : 10, 15)
 bb15:

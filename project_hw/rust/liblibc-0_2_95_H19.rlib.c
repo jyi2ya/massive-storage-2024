@@ -35,62 +35,19 @@ static inline uint8_t __mrustc_atomicloop8(volatile uint8_t* slot, uint8_t param
 static inline uint16_t __mrustc_atomicloop16(volatile uint16_t* slot, uint16_t param, int ordering, uint16_t (*cb)(uint16_t, uint16_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint16_t v = atomic_load_explicit((_Atomic uint16_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint16_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint32_t __mrustc_atomicloop32(volatile uint32_t* slot, uint32_t param, int ordering, uint32_t (*cb)(uint32_t, uint32_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint32_t v = atomic_load_explicit((_Atomic uint32_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint32_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint64_t __mrustc_atomicloop64(volatile uint64_t* slot, uint64_t param, int ordering, uint64_t (*cb)(uint64_t, uint64_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint64_t v = atomic_load_explicit((_Atomic uint64_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
-typedef struct { uint64_t lo, hi; } uint128_t;
-typedef struct { uint64_t lo, hi; } int128_t;
-static inline uint128_t intrinsic_ctlz_u128(uint128_t v);
-static inline uint128_t shl128(uint128_t a, uint32_t b);
-static inline uint128_t shr128(uint128_t a, uint32_t b);
-static inline float make_float(int is_neg, int exp, uint32_t mantissa_bits) { float rv; uint32_t vi=(mantissa_bits&((1<<23)-1))|((exp+127)<<23);if(is_neg)vi|=1<<31; memcpy(&rv, &vi, 4); return rv; }
-static inline double make_double(int is_neg, int exp, uint32_t mantissa_bits) { double rv; uint64_t vi=(mantissa_bits&((1ull<<52)-1))|((uint64_t)(exp+1023)<<52);if(is_neg)vi|=1ull<<63; memcpy(&rv, &vi, 4); return rv; }
-static inline uint128_t make128_raw(uint64_t hi, uint64_t lo) { uint128_t rv = { lo, hi }; return rv; }
-static inline uint128_t make128(uint64_t v) { uint128_t rv = { v, 0 }; return rv; }
-static inline float cast128_float(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(23+1))-64)); uint64_t b = shr128(y, (64-(23+1))).lo | (y.lo & 0xFFFFFFFFFF); uint64_t m = a + ((b - ((b >> 63) & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+127-1; uint32_t vi = (e << 23) + m; float rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline double cast128_double(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(52+1))-64)); uint64_t b = shr128(y, (64-(52+1))).lo | (y.lo & 0x7FF); uint64_t m = a + ((b - (b >> 63 & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+1023-1; uint64_t vi = (e << 52) + m; double rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline int cmp128(uint128_t a, uint128_t b) { if(a.hi != b.hi) return a.hi < b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo + b.lo; o->hi = a.hi + b.hi + (o->lo < a.lo ? 1 : 0); return (o->hi < a.hi); }
-static inline bool sub128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo - b.lo; o->hi = a.hi - b.hi - (a.lo < b.lo ? 1 : 0); return (o->hi > a.hi); }
-static inline bool mul128_o(uint128_t a, uint128_t b, uint128_t* o) { bool of = false; o->hi = 0; o->lo = 0; for(int i=0;i<128;i++){ uint64_t m = (1ull << (i % 64)); if(a.hi==0&&a.lo<m)   break; if(i>=64&&a.hi<m) break; if( m & (i >= 64 ? a.hi : a.lo) ) of |= add128_o(*o, b, o); b.hi = (b.hi << 1) | (b.lo >> 63); b.lo = (b.lo << 1); } return of;}
-static inline bool div128_o(uint128_t a, uint128_t b, uint128_t* q, uint128_t* r) { if(a.hi == 0 && b.hi == 0) { if(q) { q->hi=0; q->lo = a.lo / b.lo; } if(r) { r->hi=0; r->lo = a.lo % b.lo; } return false; } if(cmp128(a, b) < 0) { if(q) { q->hi=0; q->lo=0; } if(r) *r = a; return false; } uint128_t a_div_2 = {(a.lo>>1)|(a.hi << 63), a.hi>>1}; int shift = 0; while( cmp128(a_div_2, b) >= 0 && shift < 128 ) { shift += 1; b.hi = (b.hi<<1)|(b.lo>>63); b.lo <<= 1; } if(shift == 128) return true; uint128_t mask = { /*lo=*/(shift >= 64 ? 0 : (1ull << shift)), /*hi=*/(shift < 64 ? 0 : 1ull << (shift-64)) }; shift ++; if(q) { q->hi = 0; q->lo = 0; } while(shift--) { if( cmp128(a, b) >= 0 ) { if(q) add128_o(*q, mask, q); sub128_o(a, b, &a); } mask.lo = (mask.lo >> 1) | (mask.hi << 63); mask.hi >>= 1; b.lo = (b.lo >> 1) | (b.hi << 63); b.hi >>= 1; } if(r) *r = a; return false;}
-static inline uint128_t add128(uint128_t a, uint128_t b) { uint128_t v; add128_o(a, b, &v); return v; }
-static inline uint128_t sub128(uint128_t a, uint128_t b) { uint128_t v; sub128_o(a, b, &v); return v; }
-static inline uint128_t mul128(uint128_t a, uint128_t b) { uint128_t v; mul128_o(a, b, &v); return v; }
-static inline uint128_t div128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, &v, NULL); return v; }
-static inline uint128_t mod128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, NULL, &v); return v;}
-static inline uint128_t and128(uint128_t a, uint128_t b) { uint128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline uint128_t or128 (uint128_t a, uint128_t b) { uint128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline uint128_t xor128(uint128_t a, uint128_t b) { uint128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline uint128_t shl128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline uint128_t shr128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = a.hi >> b; } else { v.lo = a.hi >> (b - 64); v.hi = 0; } return v; }
-static inline uint128_t popcount128(uint128_t a) { uint128_t v = { __builtin_popcountll(a.lo) + __builtin_popcountll(a.hi), 0 }; return v; }
-static inline uint128_t __builtin_bswap128(uint128_t v) { uint128_t rv = { __builtin_bswap64(v.hi), __builtin_bswap64(v.lo) }; return rv; }
+typedef unsigned __int128 uint128_t;
+typedef signed __int128 int128_t;
+static inline uint128_t __builtin_bswap128(uint128_t v) {
+	uint64_t lo = __builtin_bswap64((uint64_t)v);
+	uint64_t hi = __builtin_bswap64((uint64_t)(v>>64));
+	return ((uint128_t)lo << 64) | (uint128_t)hi;
+}
 static inline uint128_t intrinsic_ctlz_u128(uint128_t v) {
-	uint128_t rv = { (v.hi != 0 ? __builtin_clz64(v.hi) : (v.lo != 0 ? 64 + __builtin_clz64(v.lo) : 128)), 0 };
-	return rv;
+	return (v == 0 ? 128 : (v >> 64 != 0 ? __builtin_clz64(v>>64) : 64 + __builtin_clz64(v)));
 }
 static inline uint128_t intrinsic_cttz_u128(uint128_t v) {
-	uint128_t rv = { (v.lo == 0 ? (v.hi == 0 ? 128 : __builtin_ctz64(v.hi) + 64) : __builtin_ctz64(v.lo)), 0 };
-	return rv;
+	return (v == 0 ? 128 : ((v&0xFFFFFFFFFFFFFFFF) == 0 ? __builtin_ctz64(v>>64) + 64 : __builtin_ctz64(v)));
 }
-static inline int128_t make128s_raw(uint64_t hi, uint64_t lo) { int128_t rv = { lo, hi }; return rv; }
-static inline int128_t make128s(int64_t v) { int128_t rv = { v, (v < 0 ? -1 : 0) }; return rv; }
-static inline int128_t neg128s(int128_t v) { int128_t rv = { ~v.lo+1, ~v.hi + (v.lo == 0) }; return rv; }
-static inline float cast128s_float(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_float(make128_raw(v.hi,v.lo)); }
-static inline double cast128s_double(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_double(make128_raw(v.hi,v.lo)); }
-static inline int cmp128s(int128_t a, int128_t b) { if(a.hi != b.hi) return (int64_t)a.hi < (int64_t)b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; add128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna==sgnb && sgno != sgna); }
-static inline bool sub128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; sub128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna!=sgnb && sgno != sgna); }
-static inline bool mul128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna = (a.hi >> 63); bool sgnb = (b.hi >> 63); if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = mul128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); if(sgna != sgnb) *o = neg128s(*o); return rv; }
-static inline bool div128s_o(int128_t a, int128_t b, int128_t* q, int128_t* r) { bool sgna = (a.hi >> 63) != 0; bool sgnb = (b.hi >> 63) != 0; if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = div128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)q, (uint128_t*)r); if(sgna != sgnb && q) *q = neg128s(*q); if(sgna && r) *r = neg128s(*r); return rv; }
-static inline int128_t add128s(int128_t a, int128_t b) { int128_t v; add128s_o(a, b, &v); return v; }
-static inline int128_t sub128s(int128_t a, int128_t b) { int128_t v; sub128s_o(a, b, &v); return v; }
-static inline int128_t mul128s(int128_t a, int128_t b) { int128_t v; mul128s_o(a, b, &v); return v; }
-static inline int128_t div128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, &v, NULL); return v; }
-static inline int128_t mod128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, NULL, &v); return v; }
-static inline int128_t and128s(int128_t a, int128_t b) { int128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline int128_t or128s (int128_t a, int128_t b) { int128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline int128_t xor128s(int128_t a, int128_t b) { int128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline int128_t shl128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline int128_t shr128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = (int64_t)a.hi >> b; } else { v.lo = (int64_t)a.hi >> (b - 64); v.hi = (int64_t)a.hi < 0 ? -1 : 0; } return v; }
 
 static inline int slice_cmp(SLICE_PTR l, SLICE_PTR r) {
 	int rv = memcmp(l.PTR, r.PTR, l.META < r.META ? l.META : r.META);
@@ -118,7 +75,7 @@ static inline uint8_t __mrustc_bitrev8(uint8_t v) { if(v==0||v==0xFF) return v; 
 static inline uint16_t __mrustc_bitrev16(uint16_t v) { if(v==0) return 0; return ((uint16_t)__mrustc_bitrev8(v>>8))|((uint16_t)__mrustc_bitrev8(v)<<8); }
 static inline uint32_t __mrustc_bitrev32(uint32_t v) { if(v==0) return 0; return ((uint32_t)__mrustc_bitrev16(v>>16))|((uint32_t)__mrustc_bitrev16(v)<<16); }
 static inline uint64_t __mrustc_bitrev64(uint64_t v) { if(v==0) return 0; return ((uint64_t)__mrustc_bitrev32(v>>32))|((uint64_t)__mrustc_bitrev32(v)<<32); }
-static inline uint128_t __mrustc_bitrev128(uint128_t v) { uint128_t rv = { __mrustc_bitrev64(v.hi), __mrustc_bitrev64(v.lo) }; return rv; }
+static inline uint128_t __mrustc_bitrev128(uint128_t v) { if(v==0) return 0; uint128_t rv = ((uint128_t)__mrustc_bitrev64(v>>64))|((uint128_t)__mrustc_bitrev64(v)<<64); return rv; }
 static inline uint8_t __mrustc_op_umax8(uint8_t a, uint8_t b) { return (a > b ? a : b); }
 static inline uint8_t __mrustc_op_umin8(uint8_t a, uint8_t b) { return (a < b ? a : b); }
 static inline uint8_t __mrustc_op_imax8(uint8_t a, uint8_t b) { return ((int8_t)a > (int8_t)b ? a : b); }
@@ -142,9 +99,9 @@ static inline uint64_t __mrustc_op_and_not64(uint64_t a, uint64_t b) { return ~(
 struct s_ZRG2cE14libc0_2_95_H194unix7timeval0g;
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g;
 struct e_ZRG2cE14libc0_2_95_H194unix3DIR0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g;
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7regex_t0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux26posix_spawn_file_actions_t0g;
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g;
@@ -155,7 +112,7 @@ struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6glob_t0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6mntent0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g;
-struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux17posix_spawnattr_t0g;
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g;
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g;
@@ -163,9 +120,9 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10itimerspec0g;
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5aiocb0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16pthread_rwlock_t0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux20pthread_rwlockattr_t0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g;
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8glob64_t0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g;
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7termios0g;
 struct s_ZRG2cE14libc0_2_95_H194unix7servent0g;
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g;
@@ -248,11 +205,11 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g;
 struct e_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8fpos64_t0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux7mq_attr0g;
 struct s_ZRG2cE14libc0_2_95_H194unix6rusage0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12if_nameindex0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g;
 typedef int32_t  (*t_ZRTFe1C1PuG2cE9core0_0_03ffi6c_void0gCf )( struct e_ZRG2cE9core0_0_03ffi6c_void0g * ); // extern "C" fn(*mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12dl_phdr_info0g;
 typedef int32_t  (*t_ZRTFue1C3PuG4cE14libc0_2_95_H194unix10linux_like5linux12dl_phdr_info0gCuPuG2cE9core0_0_03ffi6c_void0gCf )( struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12dl_phdr_info0g *, uintptr_t , struct e_ZRG2cE9core0_0_03ffi6c_void0g * ); // unsafe extern "C" fn(*mut ::"libc-0_2_95_H19"::unix::linux_like::linux::dl_phdr_info/*S*/, usize, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32
 // struct ::"core-0_0_0"::option::Option#Some<unsafe extern "C" fn(*mut ::"libc-0_2_95_H19"::unix::linux_like::linux::dl_phdr_info/*S*/, usize, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32,>
@@ -271,20 +228,19 @@ struct s_ZRG2cE14libc0_2_95_H194unix5group0g;
 typedef struct e_ZRG2cE9core0_0_03ffi6c_void0g * (*t_ZRTFe1C1PuG2cE9core0_0_03ffi6c_void0gPuG2c_A_B_C0g )( struct e_ZRG2cE9core0_0_03ffi6c_void0g * ); // extern "C" fn(*mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10regmatch_t0g;
 struct s_ZRG2cE14libc0_2_95_H194unix8protoent0g;
-typedef int32_t  (*t_ZRTFe1C2PsCbCfCf )( int8_t *, int32_t  ); // extern "C" fn(*const i8, i32, ) -> i32
-// struct ::"core-0_0_0"::option::Option#Some<extern "C" fn(*const i8, i32, ) -> i32,>
-struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCbCfCf  {
-	/*@0*/t_ZRTFe1C2PsCbCfCf _0; // extern "C" fn(*const i8, i32, ) -> i32
+typedef int32_t  (*t_ZRTFe1C2PsCaCfCf )( uint8_t *, int32_t  ); // extern "C" fn(*const u8, i32, ) -> i32
+// struct ::"core-0_0_0"::option::Option#Some<extern "C" fn(*const u8, i32, ) -> i32,>
+struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCaCfCf  {
+	/*@0*/t_ZRTFe1C2PsCaCfCf _0; // extern "C" fn(*const u8, i32, ) -> i32
 } ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCbCfCf[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCbCfCf) == 8) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCbCfCf[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCbCfCf) == 8) ? 1 : -1 ];
-// enum ::"core-0_0_0"::option::Option<extern "C" fn(*const i8, i32, ) -> i32,>
-struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCbCfCf {
+typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCaCfCf[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCaCfCf) == 8) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCaCfCf[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCaCfCf) == 8) ? 1 : -1 ];
+// enum ::"core-0_0_0"::option::Option<extern "C" fn(*const u8, i32, ) -> i32,>
+struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCaCfCf {
 	struct {
-		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCbCfCf var_1;
+		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C2PsCaCfCf var_1;
 	} DATA;};
-typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gFe1C2PsCbCfCf[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCbCfCf) == 8) ? 1 : -1 ];
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g;
+typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gFe1C2PsCaCfCf[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCaCfCf) == 8) ? 1 : -1 ];
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7utsname0g;
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7cmsghdr0g;
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::cmsghdr
@@ -306,7 +262,7 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8dirent640g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6dirent0g;
 struct s_ZRG2cE14libc0_2_95_H194unix7winsize0g;
 struct e_ZRG2cE14libc0_2_95_H194unix6fpos_t0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g;
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like2tm0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_cond_t0g;
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like5lconv0g;
@@ -343,9 +299,8 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu6msghdr0g  {
 typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu6msghdr0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu6msghdr0g) == 56) ? 1 : -1 ];
 typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu6msghdr0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu6msghdr0g) == 8) ? 1 : -1 ];
 struct e_ZRG3cE14libc0_2_95_H194unix10linux_like8timezone0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g;
-struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sigevent0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g;
 // struct ::"core-0_0_0"::marker::PhantomData<&'#omitted mut u64,>
 struct s_ZRG2cE9core0_0_06marker11PhantomData1gBuCg  {
 	char _d;
@@ -375,19 +330,6 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5timex0g;
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu10ntptimeval0g;
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8rlimit640g;
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7mmsghdr0g;
-typedef int32_t  (*t_ZRTFue1C3PsG2cE9core0_0_03ffi6c_void0gPsG2c_A_B_C0gPuG2c_A_B_C0gCf )( struct e_ZRG2cE9core0_0_03ffi6c_void0g *, struct e_ZRG2cE9core0_0_03ffi6c_void0g *, struct e_ZRG2cE9core0_0_03ffi6c_void0g * ); // unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32
-// struct ::"core-0_0_0"::option::Option#Some<unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32,>
-struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf  {
-	/*@0*/t_ZRTFue1C3PsG2cE9core0_0_03ffi6c_void0gPsG2c_A_B_C0gPuG2c_A_B_C0gCf _0; // unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32
-} ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf) == 8) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf) == 8) ? 1 : -1 ];
-// enum ::"core-0_0_0"::option::Option<unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32,>
-struct e_ZRG2cE9core0_0_06option6Option1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf {
-	struct {
-		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf var_1;
-	} DATA;};
-typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::mallinfo
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8mallinfo0g  {
 	/*@0*/int32_t _0; // i32
@@ -404,9 +346,22 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8mallinfo0g  {
 typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8mallinfo0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8mallinfo0g) == 40) ? 1 : -1 ];
 typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8mallinfo0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8mallinfo0g) == 4) ? 1 : -1 ];
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g;
+typedef int32_t  (*t_ZRTFue1C3PsG2cE9core0_0_03ffi6c_void0gPsG2c_A_B_C0gPuG2c_A_B_C0gCf )( struct e_ZRG2cE9core0_0_03ffi6c_void0g *, struct e_ZRG2cE9core0_0_03ffi6c_void0g *, struct e_ZRG2cE9core0_0_03ffi6c_void0g * ); // unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32
+// struct ::"core-0_0_0"::option::Option#Some<unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32,>
+struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf  {
+	/*@0*/t_ZRTFue1C3PsG2cE9core0_0_03ffi6c_void0gPsG2c_A_B_C0gPuG2c_A_B_C0gCf _0; // unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32
+} ;
+typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf) == 8) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf) == 8) ? 1 : -1 ];
+// enum ::"core-0_0_0"::option::Option<unsafe extern "C" fn(*const ::"core-0_0_0"::ffi::c_void/*E*/, *const ::"core-0_0_0"::ffi::c_void/*E*/, *mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> i32,>
+struct e_ZRG2cE9core0_0_06option6Option1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf {
+	struct {
+		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf var_1;
+	} DATA;};
+typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gFue1C3PsG2c_A3ffi6c_void0gPsG2c_A_D_E0gPuG2c_A_D_E0gCf) == 8) ? 1 : -1 ];
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g;
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g;
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g;
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g;
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7Dl_info0g;
 struct s_ZRG2cE14libc0_2_95_H194unix3tms0g;
 typedef void (*t_ZRTFue1C1PuG2cE9core0_0_03ffi6c_void0gT0 )( struct e_ZRG2cE9core0_0_03ffi6c_void0g * ); // unsafe extern "C" fn(*mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> ()
@@ -422,6 +377,7 @@ struct e_ZRG2cE9core0_0_06option6Option1gFue1C1PuG2c_A3ffi6c_void0gT0 {
 		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFue1C1PuG2c_A3ffi6c_void0gT0 var_1;
 	} DATA;};
 typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gFue1C1PuG2c_A3ffi6c_void0gT0[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gFue1C1PuG2c_A3ffi6c_void0gT0) == 8) ? 1 : -1 ];
+struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sigevent0g;
 // enum ::"libc-0_2_95_H19"::unix::DIR
 struct e_ZRG2cE14libc0_2_95_H194unix3DIR0g {
 	char _d;
@@ -446,20 +402,20 @@ struct e_ZRG2cE14libc0_2_95_H194unix6fpos_t0g {
 typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix6fpos_t0g[ (sizeof(struct e_ZRG2cE14libc0_2_95_H194unix6fpos_t0g) == 1) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::group
 struct s_ZRG2cE14libc0_2_95_H194unix5group0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t *_1; // *mut i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t *_1; // *mut u8
 	/*@16*/uint32_t _2; // u32
-	/*@24*/int8_t **_3; // *mut *mut i8
+	/*@24*/uint8_t **_3; // *mut *mut u8
 } ;
 typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix5group0g[ (sizeof(struct s_ZRG2cE14libc0_2_95_H194unix5group0g) == 32) ? 1 : -1 ];
 typedef char alignof_assert_ZRG2cE14libc0_2_95_H194unix5group0g[ (ALIGNOF(struct s_ZRG2cE14libc0_2_95_H194unix5group0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::hostent
 struct s_ZRG2cE14libc0_2_95_H194unix7hostent0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t **_1; // *mut *mut i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t **_1; // *mut *mut u8
 	/*@16*/int32_t _2; // i32
 	/*@20*/int32_t _3; // i32
-	/*@24*/int8_t **_4; // *mut *mut i8
+	/*@24*/uint8_t **_4; // *mut *mut u8
 } ;
 typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix7hostent0g[ (sizeof(struct s_ZRG2cE14libc0_2_95_H194unix7hostent0g) == 32) ? 1 : -1 ];
 typedef char alignof_assert_ZRG2cE14libc0_2_95_H194unix7hostent0g[ (ALIGNOF(struct s_ZRG2cE14libc0_2_95_H194unix7hostent0g) == 8) ? 1 : -1 ];
@@ -500,9 +456,9 @@ typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix6linger0g[ (sizeof(struct 
 typedef char alignof_assert_ZRG2cE14libc0_2_95_H194unix6linger0g[ (ALIGNOF(struct s_ZRG2cE14libc0_2_95_H194unix6linger0g) == 4) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::Dl_info
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7Dl_info0g  {
-	/*@0*/int8_t *_0; // *const i8
+	/*@0*/uint8_t *_0; // *const u8
 	/*@8*/struct e_ZRG2cE9core0_0_03ffi6c_void0g *_1; // *mut ::"core-0_0_0"::ffi::c_void/*E*/
-	/*@16*/int8_t *_2; // *const i8
+	/*@16*/uint8_t *_2; // *const u8
 	/*@24*/struct e_ZRG2cE9core0_0_03ffi6c_void0g *_3; // *mut ::"core-0_0_0"::ffi::c_void/*E*/
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like7Dl_info0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7Dl_info0g) == 32) ? 1 : -1 ];
@@ -515,7 +471,7 @@ struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8addrinfo0g  {
 	/*@12*/int32_t _3; // i32
 	/*@16*/uint32_t _4; // u32
 	/*@24*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g *_5; // *mut ::"libc-0_2_95_H19"::unix::linux_like::sockaddr/*S*/
-	/*@32*/int8_t *_6; // *mut i8
+	/*@32*/uint8_t *_6; // *mut u8
 	/*@40*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8addrinfo0g *_7; // *mut ::"libc-0_2_95_H19"::unix::linux_like::addrinfo/*S*/
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like8addrinfo0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8addrinfo0g) == 48) ? 1 : -1 ];
@@ -530,22 +486,21 @@ struct s_ZRG3cE14libc0_2_95_H194unix10linux_like6arphdr0g  {
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like6arphdr0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like6arphdr0g) == 8) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like6arphdr0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like6arphdr0g) == 2) ? 1 : -1 ];
-typedef struct t_ZRTA14Cb  { int8_t  DATA[14]; } t_ZRTA14Cb ; // [i8; 14]
+typedef struct t_ZRTA14Ca  { uint8_t  DATA[14]; } t_ZRTA14Ca ; // [u8; 14]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::sockaddr
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g  {
 	/*@0*/uint16_t _0; // u16
-	/*@2*/t_ZRTA14Cb _1; // [i8; 14]
+	/*@2*/t_ZRTA14Ca _1; // [u8; 14]
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g) == 16) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g) == 2) ? 1 : -1 ];
-typedef struct t_ZRTA16Cb  { int8_t  DATA[16]; } t_ZRTA16Cb ; // [i8; 16]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::arpreq
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like6arpreq0g  {
 	/*@0*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::sockaddr/*S*/
 	/*@16*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g _1; // ::"libc-0_2_95_H19"::unix::linux_like::sockaddr/*S*/
 	/*@32*/int32_t _2; // i32
 	/*@36*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g _3; // ::"libc-0_2_95_H19"::unix::linux_like::sockaddr/*S*/
-	/*@52*/t_ZRTA16Cb _4; // [i8; 16]
+	/*@52*/t_ZRTA16Ca _4; // [u8; 16]
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like6arpreq0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like6arpreq0g) == 68) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like6arpreq0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like6arpreq0g) == 4) ? 1 : -1 ];
@@ -559,18 +514,16 @@ struct s_ZRG3cE14libc0_2_95_H194unix10linux_like10arpreq_old0g  {
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like10arpreq_old0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like10arpreq_old0g) == 52) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like10arpreq_old0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like10arpreq_old0g) == 4) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::epoll_event
-#pragma pack(push, 1)
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g  {
 	/*@0*/uint32_t _0; // u32
-	/*@4*/uint64_t _1; // u64
+	/*@8*/uint64_t _1; // u64
 } ;
-#pragma pack(pop)
-typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g) == 12) ? 1 : -1 ];
-typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g) == 1) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g) == 16) ? 1 : -1 ];
+typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11epoll_event0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::ifaddrs
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7ifaddrs0g  {
 	/*@0*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7ifaddrs0g *_0; // *mut ::"libc-0_2_95_H19"::unix::linux_like::ifaddrs/*S*/
-	/*@8*/int8_t *_1; // *mut i8
+	/*@8*/uint8_t *_1; // *mut u8
 	/*@16*/uint32_t _2; // u32
 	/*@24*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g *_3; // *mut ::"libc-0_2_95_H19"::unix::linux_like::sockaddr/*S*/
 	/*@32*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g *_4; // *mut ::"libc-0_2_95_H19"::unix::linux_like::sockaddr/*S*/
@@ -625,30 +578,30 @@ typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like14ip_mreq_sour
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like14ip_mreq_source0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like14ip_mreq_source0g) == 4) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::lconv
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like5lconv0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t *_1; // *mut i8
-	/*@16*/int8_t *_2; // *mut i8
-	/*@24*/int8_t *_3; // *mut i8
-	/*@32*/int8_t *_4; // *mut i8
-	/*@40*/int8_t *_5; // *mut i8
-	/*@48*/int8_t *_6; // *mut i8
-	/*@56*/int8_t *_7; // *mut i8
-	/*@64*/int8_t *_8; // *mut i8
-	/*@72*/int8_t *_9; // *mut i8
-	/*@80*/int8_t _10; // i8
-	/*@81*/int8_t _11; // i8
-	/*@82*/int8_t _12; // i8
-	/*@83*/int8_t _13; // i8
-	/*@84*/int8_t _14; // i8
-	/*@85*/int8_t _15; // i8
-	/*@86*/int8_t _16; // i8
-	/*@87*/int8_t _17; // i8
-	/*@88*/int8_t _18; // i8
-	/*@89*/int8_t _19; // i8
-	/*@90*/int8_t _20; // i8
-	/*@91*/int8_t _21; // i8
-	/*@92*/int8_t _22; // i8
-	/*@93*/int8_t _23; // i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t *_1; // *mut u8
+	/*@16*/uint8_t *_2; // *mut u8
+	/*@24*/uint8_t *_3; // *mut u8
+	/*@32*/uint8_t *_4; // *mut u8
+	/*@40*/uint8_t *_5; // *mut u8
+	/*@48*/uint8_t *_6; // *mut u8
+	/*@56*/uint8_t *_7; // *mut u8
+	/*@64*/uint8_t *_8; // *mut u8
+	/*@72*/uint8_t *_9; // *mut u8
+	/*@80*/uint8_t _10; // u8
+	/*@81*/uint8_t _11; // u8
+	/*@82*/uint8_t _12; // u8
+	/*@83*/uint8_t _13; // u8
+	/*@84*/uint8_t _14; // u8
+	/*@85*/uint8_t _15; // u8
+	/*@86*/uint8_t _16; // u8
+	/*@87*/uint8_t _17; // u8
+	/*@88*/uint8_t _18; // u8
+	/*@89*/uint8_t _19; // u8
+	/*@90*/uint8_t _20; // u8
+	/*@91*/uint8_t _21; // u8
+	/*@92*/uint8_t _22; // u8
+	/*@93*/uint8_t _23; // u8
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like5lconv0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like5lconv0g) == 96) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like5lconv0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like5lconv0g) == 8) ? 1 : -1 ];
@@ -839,14 +792,14 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11canfd_frame0g  {
 } __attribute__((__aligned__(8),)) ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11canfd_frame0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11canfd_frame0g) == 72) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11canfd_frame0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11canfd_frame0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA256Cb  { int8_t  DATA[256]; } t_ZRTA256Cb ; // [i8; 256]
+typedef struct t_ZRTA256Ca  { uint8_t  DATA[256]; } t_ZRTA256Ca ; // [u8; 256]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::dirent
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6dirent0g  {
 	/*@0*/uint64_t _0; // u64
 	/*@8*/int64_t _1; // i64
 	/*@16*/uint16_t _2; // u16
 	/*@18*/uint8_t _3; // u8
-	/*@19*/t_ZRTA256Cb _4; // [i8; 256]
+	/*@19*/t_ZRTA256Ca _4; // [u8; 256]
 } ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6dirent0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6dirent0g) == 280) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6dirent0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6dirent0g) == 8) ? 1 : -1 ];
@@ -856,14 +809,14 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8dirent640g  {
 	/*@8*/int64_t _1; // i64
 	/*@16*/uint16_t _2; // u16
 	/*@18*/uint8_t _3; // u8
-	/*@19*/t_ZRTA256Cb _4; // [i8; 256]
+	/*@19*/t_ZRTA256Ca _4; // [u8; 256]
 } ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8dirent640g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8dirent640g) == 280) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8dirent640g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8dirent640g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::dl_phdr_info
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12dl_phdr_info0g  {
 	/*@0*/uint64_t _0; // u64
-	/*@8*/int8_t *_1; // *const i8
+	/*@8*/uint8_t *_1; // *const u8
 	/*@16*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10Elf64_Phdr0g *_2; // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::Elf64_Phdr/*S*/
 	/*@24*/uint16_t _3; // u16
 	/*@32*/uint64_t _4; // u64
@@ -1010,7 +963,7 @@ typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10genlm
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::glob_t
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6glob_t0g  {
 	/*@0*/uintptr_t _0; // usize
-	/*@8*/int8_t **_1; // *mut *mut i8
+	/*@8*/uint8_t **_1; // *mut *mut u8
 	/*@16*/uintptr_t _2; // usize
 	/*@24*/int32_t _3; // i32
 	/*@32*/struct e_ZRG2cE9core0_0_03ffi6c_void0g *_4; // *mut ::"core-0_0_0"::ffi::c_void/*E*/
@@ -1069,7 +1022,7 @@ struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sigevent0g  {
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like8sigevent0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sigevent0g) == 64) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like8sigevent0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sigevent0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA32Cb  { int8_t  DATA[32]; } t_ZRTA32Cb ; // [i8; 32]
+typedef struct t_ZRTA32Ca  { uint8_t  DATA[32]; } t_ZRTA32Ca ; // [u8; 32]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::aiocb
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5aiocb0g  {
 	/*@0*/int32_t _0; // i32
@@ -1084,35 +1037,295 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5aiocb0g  {
 	/*@112*/int32_t _9; // i32
 	/*@120*/intptr_t _10; // isize
 	/*@128*/int64_t _11; // i64
-	/*@136*/t_ZRTA32Cb _12; // [i8; 32]
+	/*@136*/t_ZRTA32Ca _12; // [u8; 32]
 } ;
 typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5aiocb0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5aiocb0g) == 168) ? 1 : -1 ];
 typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5aiocb0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5aiocb0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::align::sem_t
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g  {
-	/*@0*/t_ZRTA32Cb _0; // [i8; 32]
+	/*@0*/t_ZRTA32Ca _0; // [u8; 32]
 } __attribute__((__aligned__(8),)) ;
 typedef char sizeof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g[ (sizeof(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g) == 32) ? 1 : -1 ];
 typedef char alignof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g[ (ALIGNOF(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g  {
+typedef struct t_ZRTA8Cn  { float  DATA[8]; } t_ZRTA8Cn ; // [f32; 8]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g  {
+	/*@0*/t_ZRTA8Cn _0; // [f32; 8]
+} __attribute__((__aligned__(16),)) ;
+typedef char sizeof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g[ (sizeof(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g) == 32) ? 1 : -1 ];
+typedef char alignof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g[ (ALIGNOF(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g) == 16) ? 1 : -1 ];
+typedef struct t_ZRTA31Cg  { uint64_t  DATA[31]; } t_ZRTA31Cg ; // [u64; 31]
+typedef struct t_ZRTA32Cg  { uint64_t  DATA[32]; } t_ZRTA32Cg ; // [u64; 32]
+typedef struct t_ZRTA16A32Cg  { t_ZRTA32Cg  DATA[16]; } t_ZRTA16A32Cg ; // [[u64; 32]; 16]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g  {
+	/*@0*/uint64_t _0; // u64
+	/*@8*/t_ZRTA31Cg _1; // [u64; 31]
+	/*@256*/uint64_t _2; // u64
+	/*@264*/uint64_t _3; // u64
+	/*@272*/uint64_t _4; // u64
+	/*@280*/t_ZRTA16A32Cg _5; // [[u64; 32]; 16]
+} __attribute__((__aligned__(16),)) ;
+typedef char sizeof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g[ (sizeof(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g) == 4384) ? 1 : -1 ];
+typedef char alignof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g[ (ALIGNOF(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g) == 16) ? 1 : -1 ];
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g;
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g  {
+	/*@0*/struct e_ZRG2cE9core0_0_03ffi6c_void0g *_0; // *mut ::"core-0_0_0"::ffi::c_void/*E*/
+	/*@8*/int32_t _1; // i32
+	/*@16*/uintptr_t _2; // usize
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g) == 24) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t
+struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g  {
+	/*@0*/t_ZRTA16Cg _0; // [u64; 16]
+} ;
+typedef char sizeof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g[ (sizeof(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g) == 128) ? 1 : -1 ];
+typedef char alignof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g[ (ALIGNOF(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g  {
+	/*@0*/uint64_t _0; // u64
+	/*@8*/struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g *_1; // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+	/*@16*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g _2; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+	/*@40*/struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g _3; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t/*S*/
+	/*@176*/struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g _4; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+} ;
+typedef char sizeof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g[ (sizeof(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g) == 4560) ? 1 : -1 ];
+typedef char alignof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g[ (ALIGNOF(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g) == 16) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g  {
+	/*@0*/int16_t _0; // i16
+	/*@2*/int16_t _1; // i16
+	/*@8*/int64_t _2; // i64
+	/*@16*/int64_t _3; // i64
+	/*@24*/int32_t _4; // i32
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g) == 32) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g  {
+	/*@0*/int16_t _0; // i16
+	/*@2*/int16_t _1; // i16
+	/*@8*/int64_t _2; // i64
+	/*@16*/int64_t _3; // i64
+	/*@24*/int32_t _4; // i32
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g) == 32) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g  {
+	/*@0*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7in_addr0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::in_addr/*S*/
+	/*@4*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7in_addr0g _1; // ::"libc-0_2_95_H19"::unix::linux_like::in_addr/*S*/
+	/*@8*/int32_t _2; // i32
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g) == 12) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g) == 4) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g  {
 	/*@0*/int32_t _0; // i32
 	/*@4*/uint32_t _1; // u32
 	/*@8*/uint32_t _2; // u32
 	/*@12*/uint32_t _3; // u32
 	/*@16*/uint32_t _4; // u32
-	/*@20*/uint16_t _5; // u16
-	/*@22*/uint16_t _6; // u16
-	/*@24*/uint16_t _7; // u16
-	/*@26*/uint16_t _8; // u16
-	/*@32*/uint64_t _9; // u64
-	/*@40*/uint64_t _10; // u64
+	/*@20*/uint32_t _5; // u32
+	/*@24*/uint16_t _6; // u16
+	/*@26*/uint16_t _7; // u16
+	/*@32*/uint64_t _8; // u64
+	/*@40*/uint64_t _9; // u64
 } ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g) == 48) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g) == 8) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g) == 48) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g) == 8) ? 1 : -1 ];
+typedef struct t_ZRTA8Cu  { uintptr_t  DATA[8]; } t_ZRTA8Cu ; // [usize; 8]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g  {
+	/*@0*/t_ZRTA8Cu _0; // [usize; 8]
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g) == 64) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g  {
+	/*@0*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+	/*@48*/uintptr_t _1; // usize
+	/*@56*/int64_t _2; // i64
+	/*@64*/int64_t _3; // i64
+	/*@72*/int64_t _4; // i64
+	/*@80*/int32_t _5; // i32
+	/*@84*/int32_t _6; // i32
+	/*@88*/uint64_t _7; // u64
+	/*@96*/uint64_t _8; // u64
+	/*@104*/uint64_t _9; // u64
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g) == 112) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g) == 8) ? 1 : -1 ];
+// struct ::"core-0_0_0"::option::Option#Some<extern "C" fn() -> (),>
+struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0  {
+	/*@0*/t_ZRTFe1C0T0 _0; // extern "C" fn() -> ()
+} ;
+typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0) == 8) ? 1 : -1 ];
+typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0) == 8) ? 1 : -1 ];
+// enum ::"core-0_0_0"::option::Option<extern "C" fn() -> (),>
+struct e_ZRG2cE9core0_0_06option6Option1gFe1C0T0 {
+	struct {
+		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0 var_1;
+	} DATA;};
+typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gFe1C0T0[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gFe1C0T0) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g  {
+	/*@0*/uintptr_t _0; // usize
+	/*@8*/struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g _1; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t/*S*/
+	/*@136*/int32_t _2; // i32
+	/*@144*/struct e_ZRG2cE9core0_0_06option6Option1gFe1C0T0 _3; // ::"core-0_0_0"::option::Option<extern "C" fn() -> (),>/*E*/
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g) == 152) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g) == 8) ? 1 : -1 ];
+typedef struct t_ZRTA29Cf  { int32_t  DATA[29]; } t_ZRTA29Cf ; // [i32; 29]
+typedef struct t_ZRTA0Cu  { char _d; }  __attribute__((__aligned__(8),))t_ZRTA0Cu ; // [usize; 0]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g  {
+	/*@0*/int32_t _0; // i32
+	/*@4*/int32_t _1; // i32
+	/*@8*/int32_t _2; // i32
+	/*@12*/t_ZRTA29Cf _3; // [i32; 29]
+	/*@128*/// ZST; // [usize; 0]
+} __attribute__((__aligned__(8),)) ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g) == 128) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g  {
+	/*@0*/uint64_t _0; // u64
+	/*@8*/uint64_t _1; // u64
+	/*@16*/uint32_t _2; // u32
+	/*@20*/uint32_t _3; // u32
+	/*@24*/uint32_t _4; // u32
+	/*@28*/uint32_t _5; // u32
+	/*@32*/uint64_t _6; // u64
+	/*@40*/uint64_t _7; // u64
+	/*@48*/int64_t _8; // i64
+	/*@56*/int32_t _9; // i32
+	/*@60*/int32_t _10; // i32
+	/*@64*/int64_t _11; // i64
+	/*@72*/int64_t _12; // i64
+	/*@80*/int64_t _13; // i64
+	/*@88*/int64_t _14; // i64
+	/*@96*/int64_t _15; // i64
+	/*@104*/int64_t _16; // i64
+	/*@112*/int64_t _17; // i64
+	/*@120*/t_ZRTA2Cf _18; // [i32; 2]
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g) == 128) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g  {
+	/*@0*/uint64_t _0; // u64
+	/*@8*/uint64_t _1; // u64
+	/*@16*/uint32_t _2; // u32
+	/*@20*/uint32_t _3; // u32
+	/*@24*/uint32_t _4; // u32
+	/*@28*/uint32_t _5; // u32
+	/*@32*/uint64_t _6; // u64
+	/*@40*/uint64_t _7; // u64
+	/*@48*/int64_t _8; // i64
+	/*@56*/int32_t _9; // i32
+	/*@60*/int32_t _10; // i32
+	/*@64*/int64_t _11; // i64
+	/*@72*/int64_t _12; // i64
+	/*@80*/int64_t _13; // i64
+	/*@88*/int64_t _14; // i64
+	/*@96*/int64_t _15; // i64
+	/*@104*/int64_t _16; // i64
+	/*@112*/int64_t _17; // i64
+	/*@120*/t_ZRTA2Cf _18; // [i32; 2]
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g) == 128) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g) == 8) ? 1 : -1 ];
+typedef struct t_ZRTA5Ch  { int64_t  DATA[5]; } t_ZRTA5Ch ; // [i64; 5]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g  {
+	/*@0*/int64_t _0; // i64
+	/*@8*/int64_t _1; // i64
+	/*@16*/uint64_t _2; // u64
+	/*@24*/uint64_t _3; // u64
+	/*@32*/uint64_t _4; // u64
+	/*@40*/uint64_t _5; // u64
+	/*@48*/uint64_t _6; // u64
+	/*@56*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6fsid_t0g _7; // ::"libc-0_2_95_H19"::unix::linux_like::linux::fsid_t/*S*/
+	/*@64*/int64_t _8; // i64
+	/*@72*/int64_t _9; // i64
+	/*@80*/t_ZRTA5Ch _10; // [i64; 5]
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g) == 120) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g) == 8) ? 1 : -1 ];
+typedef struct t_ZRTA4Ch  { int64_t  DATA[4]; } t_ZRTA4Ch ; // [i64; 4]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g  {
+	/*@0*/int64_t _0; // i64
+	/*@8*/int64_t _1; // i64
+	/*@16*/uint64_t _2; // u64
+	/*@24*/uint64_t _3; // u64
+	/*@32*/uint64_t _4; // u64
+	/*@40*/uint64_t _5; // u64
+	/*@48*/uint64_t _6; // u64
+	/*@56*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6fsid_t0g _7; // ::"libc-0_2_95_H19"::unix::linux_like::linux::fsid_t/*S*/
+	/*@64*/int64_t _8; // i64
+	/*@72*/int64_t _9; // i64
+	/*@80*/int64_t _10; // i64
+	/*@88*/t_ZRTA4Ch _11; // [i64; 4]
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g) == 120) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g) == 8) ? 1 : -1 ];
+typedef struct t_ZRTA6Cf  { int32_t  DATA[6]; } t_ZRTA6Cf ; // [i32; 6]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g  {
+	/*@0*/uint64_t _0; // u64
+	/*@8*/uint64_t _1; // u64
+	/*@16*/uint64_t _2; // u64
+	/*@24*/uint64_t _3; // u64
+	/*@32*/uint64_t _4; // u64
+	/*@40*/uint64_t _5; // u64
+	/*@48*/uint64_t _6; // u64
+	/*@56*/uint64_t _7; // u64
+	/*@64*/uint64_t _8; // u64
+	/*@72*/uint64_t _9; // u64
+	/*@80*/uint64_t _10; // u64
+	/*@88*/t_ZRTA6Cf _11; // [i32; 6]
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g) == 112) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g) == 8) ? 1 : -1 ];
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g  {
+	/*@0*/uint64_t _0; // u64
+	/*@8*/uint64_t _1; // u64
+	/*@16*/uint64_t _2; // u64
+	/*@24*/uint64_t _3; // u64
+	/*@32*/uint64_t _4; // u64
+	/*@40*/uint64_t _5; // u64
+	/*@48*/uint64_t _6; // u64
+	/*@56*/uint64_t _7; // u64
+	/*@64*/uint64_t _8; // u64
+	/*@72*/uint64_t _9; // u64
+	/*@80*/uint64_t _10; // u64
+	/*@88*/t_ZRTA6Cf _11; // [i32; 6]
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g) == 112) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g) == 8) ? 1 : -1 ];
+typedef struct t_ZRTA19Ca  { uint8_t  DATA[19]; } t_ZRTA19Ca ; // [u8; 19]
+// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g  {
+	/*@0*/uint32_t _0; // u32
+	/*@4*/uint32_t _1; // u32
+	/*@8*/uint32_t _2; // u32
+	/*@12*/uint32_t _3; // u32
+	/*@16*/uint8_t _4; // u8
+	/*@17*/t_ZRTA19Ca _5; // [u8; 19]
+	/*@36*/uint32_t _6; // u32
+	/*@40*/uint32_t _7; // u32
+} ;
+typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g) == 44) ? 1 : -1 ];
+typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g) == 4) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::msqid_ds
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g  {
-	/*@0*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
+	/*@0*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
 	/*@48*/int64_t _1; // i64
 	/*@56*/int64_t _2; // i64
 	/*@64*/int64_t _3; // i64
@@ -1126,14 +1339,7 @@ struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g  {
 } ;
 typedef char sizeof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g[ (sizeof(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g) == 120) ? 1 : -1 ];
 typedef char alignof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g[ (ALIGNOF(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t
-struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g  {
-	/*@0*/t_ZRTA16Cg _0; // [u64; 16]
-} ;
-typedef char sizeof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g[ (sizeof(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g) == 128) ? 1 : -1 ];
-typedef char alignof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g[ (ALIGNOF(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g) == 8) ? 1 : -1 ];
 typedef struct t_ZRTA3Cg  { uint64_t  DATA[3]; } t_ZRTA3Cg ; // [u64; 3]
-typedef struct t_ZRTA0Cb  { char _d; }  __attribute__((__aligned__(1),))t_ZRTA0Cb ; // [i8; 0]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sysinfo
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g  {
 	/*@0*/int64_t _0; // i64
@@ -1149,372 +1355,14 @@ struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g  {
 	/*@88*/uint64_t _10; // u64
 	/*@96*/uint64_t _11; // u64
 	/*@104*/uint32_t _12; // u32
-	/*@108*/// ZST; // [i8; 0]
+	/*@108*/// ZST; // [u8; 0]
 } ;
 typedef char sizeof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g[ (sizeof(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g) == 112) ? 1 : -1 ];
 typedef char alignof_assert_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g[ (ALIGNOF(struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA4Cc  { uint16_t  DATA[4]; } t_ZRTA4Cc ; // [u16; 4]
-typedef struct t_ZRTA3Cc  { uint16_t  DATA[3]; } t_ZRTA3Cc ; // [u16; 3]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g  {
-	/*@0*/t_ZRTA4Cc _0; // [u16; 4]
-	/*@8*/uint16_t _1; // u16
-	/*@10*/t_ZRTA3Cc _2; // [u16; 3]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g) == 16) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g) == 2) ? 1 : -1 ];
-typedef struct t_ZRTA8G7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g  { struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g  DATA[8]; } t_ZRTA8G7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g ; // [::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/; 8]
-typedef struct t_ZRTA4Ce  { uint32_t  DATA[4]; } t_ZRTA4Ce ; // [u32; 4]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g  {
-	/*@0*/t_ZRTA4Ce _0; // [u32; 4]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g) == 16) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g) == 4) ? 1 : -1 ];
-typedef struct t_ZRTA16G7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g  { struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g  DATA[16]; } t_ZRTA16G7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g ; // [::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/; 16]
-typedef struct t_ZRTA12Cg  { uint64_t  DATA[12]; } t_ZRTA12Cg ; // [u64; 12]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g  {
-	/*@0*/uint16_t _0; // u16
-	/*@2*/uint16_t _1; // u16
-	/*@4*/uint16_t _2; // u16
-	/*@6*/uint16_t _3; // u16
-	/*@8*/uint64_t _4; // u64
-	/*@16*/uint64_t _5; // u64
-	/*@24*/uint32_t _6; // u32
-	/*@28*/uint32_t _7; // u32
-	/*@32*/t_ZRTA8G7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g _8; // [::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/; 8]
-	/*@160*/t_ZRTA16G7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g _9; // [::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/; 16]
-	/*@416*/t_ZRTA12Cg _10; // [u64; 12]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g) == 512) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA4Co  { double  DATA[4]; } t_ZRTA4Co ; // [f64; 4]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t
-struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g  {
-	/*@0*/t_ZRTA4Co _0; // [f64; 4]
-} __attribute__((__aligned__(16),)) ;
-typedef char sizeof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g[ (sizeof(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g) == 32) ? 1 : -1 ];
-typedef char alignof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g[ (ALIGNOF(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g) == 16) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g  {
-	/*@0*/int16_t _0; // i16
-	/*@2*/int16_t _1; // i16
-	/*@8*/int64_t _2; // i64
-	/*@16*/int64_t _3; // i64
-	/*@24*/int32_t _4; // i32
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g) == 32) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g  {
-	/*@0*/int16_t _0; // i16
-	/*@2*/int16_t _1; // i16
-	/*@8*/int64_t _2; // i64
-	/*@16*/int64_t _3; // i64
-	/*@24*/int32_t _4; // i32
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g) == 32) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g  {
-	/*@0*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7in_addr0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::in_addr/*S*/
-	/*@4*/struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7in_addr0g _1; // ::"libc-0_2_95_H19"::unix::linux_like::in_addr/*S*/
-	/*@8*/int32_t _2; // i32
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g) == 12) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g) == 4) ? 1 : -1 ];
-typedef struct t_ZRTA23Ch  { int64_t  DATA[23]; } t_ZRTA23Ch ; // [i64; 23]
-typedef struct t_ZRTA8Cg  { uint64_t  DATA[8]; } t_ZRTA8Cg ; // [u64; 8]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g  {
-	/*@0*/t_ZRTA23Ch _0; // [i64; 23]
-	/*@184*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g *_1; // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-	/*@192*/t_ZRTA8Cg _2; // [u64; 8]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g) == 256) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA6Cf  { int32_t  DATA[6]; } t_ZRTA6Cf ; // [i32; 6]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs
-struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g  {
-	/*@0*/uint64_t _0; // u64
-	/*@8*/uint64_t _1; // u64
-	/*@16*/uint64_t _2; // u64
-	/*@24*/uint64_t _3; // u64
-	/*@32*/uint64_t _4; // u64
-	/*@40*/uint64_t _5; // u64
-	/*@48*/uint64_t _6; // u64
-	/*@56*/uint64_t _7; // u64
-	/*@64*/uint64_t _8; // u64
-	/*@72*/uint64_t _9; // u64
-	/*@80*/uint64_t _10; // u64
-	/*@88*/t_ZRTA6Cf _11; // [i32; 6]
-} ;
-typedef char sizeof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g[ (sizeof(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g) == 112) ? 1 : -1 ];
-typedef char alignof_assert_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g[ (ALIGNOF(struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA7Cg  { uint64_t  DATA[7]; } t_ZRTA7Cg ; // [u64; 7]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g  {
-	/*@0*/t_ZRTA7Cg _0; // [u64; 7]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g) == 56) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g  {
-	/*@0*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-	/*@48*/uintptr_t _1; // usize
-	/*@56*/int64_t _2; // i64
-	/*@64*/int64_t _3; // i64
-	/*@72*/int64_t _4; // i64
-	/*@80*/int32_t _5; // i32
-	/*@84*/int32_t _6; // i32
-	/*@88*/uint64_t _7; // u64
-	/*@96*/uint64_t _8; // u64
-	/*@104*/uint64_t _9; // u64
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g) == 112) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g) == 8) ? 1 : -1 ];
-// struct ::"core-0_0_0"::option::Option#Some<extern "C" fn() -> (),>
-struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0  {
-	/*@0*/t_ZRTFe1C0T0 _0; // extern "C" fn() -> ()
-} ;
-typedef char sizeof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0[ (sizeof(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0) == 8) ? 1 : -1 ];
-typedef char alignof_assert_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0[ (ALIGNOF(struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0) == 8) ? 1 : -1 ];
-// enum ::"core-0_0_0"::option::Option<extern "C" fn() -> (),>
-struct e_ZRG2cE9core0_0_06option6Option1gFe1C0T0 {
-	struct {
-		struct s_ZRG2cE9core0_0_06optionG10OptionSome1gFe1C0T0 var_1;
-	} DATA;};
-typedef char sizeof_assert_ZRG2cE9core0_0_06option6Option1gFe1C0T0[ (sizeof(struct e_ZRG2cE9core0_0_06option6Option1gFe1C0T0) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g  {
-	/*@0*/uintptr_t _0; // usize
-	/*@8*/struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g _1; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t/*S*/
-	/*@136*/int32_t _2; // i32
-	/*@144*/struct e_ZRG2cE9core0_0_06option6Option1gFe1C0T0 _3; // ::"core-0_0_0"::option::Option<extern "C" fn() -> (),>/*E*/
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g) == 152) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA29Cf  { int32_t  DATA[29]; } t_ZRTA29Cf ; // [i32; 29]
-typedef struct t_ZRTA0Cg  { char _d; }  __attribute__((__aligned__(8),))t_ZRTA0Cg ; // [u64; 0]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g  {
-	/*@0*/int32_t _0; // i32
-	/*@4*/int32_t _1; // i32
-	/*@8*/int32_t _2; // i32
-	/*@12*/t_ZRTA29Cf _3; // [i32; 29]
-	/*@128*/// ZST; // [u64; 0]
-} __attribute__((__aligned__(8),)) ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g) == 128) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g  {
-	/*@0*/struct e_ZRG2cE9core0_0_03ffi6c_void0g *_0; // *mut ::"core-0_0_0"::ffi::c_void/*E*/
-	/*@8*/int32_t _1; // i32
-	/*@16*/uintptr_t _2; // usize
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g) == 24) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA3Ch  { int64_t  DATA[3]; } t_ZRTA3Ch ; // [i64; 3]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g  {
-	/*@0*/uint64_t _0; // u64
-	/*@8*/uint64_t _1; // u64
-	/*@16*/uint64_t _2; // u64
-	/*@24*/uint32_t _3; // u32
-	/*@28*/uint32_t _4; // u32
-	/*@32*/uint32_t _5; // u32
-	/*@36*/int32_t _6; // i32
-	/*@40*/uint64_t _7; // u64
-	/*@48*/int64_t _8; // i64
-	/*@56*/int64_t _9; // i64
-	/*@64*/int64_t _10; // i64
-	/*@72*/int64_t _11; // i64
-	/*@80*/int64_t _12; // i64
-	/*@88*/int64_t _13; // i64
-	/*@96*/int64_t _14; // i64
-	/*@104*/int64_t _15; // i64
-	/*@112*/int64_t _16; // i64
-	/*@120*/t_ZRTA3Ch _17; // [i64; 3]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g) == 144) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g  {
-	/*@0*/uint64_t _0; // u64
-	/*@8*/uint64_t _1; // u64
-	/*@16*/uint64_t _2; // u64
-	/*@24*/uint32_t _3; // u32
-	/*@28*/uint32_t _4; // u32
-	/*@32*/uint32_t _5; // u32
-	/*@36*/int32_t _6; // i32
-	/*@40*/uint64_t _7; // u64
-	/*@48*/int64_t _8; // i64
-	/*@56*/int64_t _9; // i64
-	/*@64*/int64_t _10; // i64
-	/*@72*/int64_t _11; // i64
-	/*@80*/int64_t _12; // i64
-	/*@88*/int64_t _13; // i64
-	/*@96*/int64_t _14; // i64
-	/*@104*/int64_t _15; // i64
-	/*@112*/int64_t _16; // i64
-	/*@120*/t_ZRTA3Ch _17; // [i64; 3]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g) == 144) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA5Ch  { int64_t  DATA[5]; } t_ZRTA5Ch ; // [i64; 5]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g  {
-	/*@0*/int64_t _0; // i64
-	/*@8*/int64_t _1; // i64
-	/*@16*/uint64_t _2; // u64
-	/*@24*/uint64_t _3; // u64
-	/*@32*/uint64_t _4; // u64
-	/*@40*/uint64_t _5; // u64
-	/*@48*/uint64_t _6; // u64
-	/*@56*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6fsid_t0g _7; // ::"libc-0_2_95_H19"::unix::linux_like::linux::fsid_t/*S*/
-	/*@64*/int64_t _8; // i64
-	/*@72*/int64_t _9; // i64
-	/*@80*/t_ZRTA5Ch _10; // [i64; 5]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g) == 120) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA4Ch  { int64_t  DATA[4]; } t_ZRTA4Ch ; // [i64; 4]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g  {
-	/*@0*/int64_t _0; // i64
-	/*@8*/int64_t _1; // i64
-	/*@16*/uint64_t _2; // u64
-	/*@24*/uint64_t _3; // u64
-	/*@32*/uint64_t _4; // u64
-	/*@40*/uint64_t _5; // u64
-	/*@48*/uint64_t _6; // u64
-	/*@56*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6fsid_t0g _7; // ::"libc-0_2_95_H19"::unix::linux_like::linux::fsid_t/*S*/
-	/*@64*/int64_t _8; // i64
-	/*@72*/int64_t _9; // i64
-	/*@80*/int64_t _10; // i64
-	/*@88*/t_ZRTA4Ch _11; // [i64; 4]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g) == 120) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g  {
-	/*@0*/uint64_t _0; // u64
-	/*@8*/uint64_t _1; // u64
-	/*@16*/uint64_t _2; // u64
-	/*@24*/uint64_t _3; // u64
-	/*@32*/uint64_t _4; // u64
-	/*@40*/uint64_t _5; // u64
-	/*@48*/uint64_t _6; // u64
-	/*@56*/uint64_t _7; // u64
-	/*@64*/uint64_t _8; // u64
-	/*@72*/uint64_t _9; // u64
-	/*@80*/uint64_t _10; // u64
-	/*@88*/t_ZRTA6Cf _11; // [i32; 6]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g) == 112) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA19Ca  { uint8_t  DATA[19]; } t_ZRTA19Ca ; // [u8; 19]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g  {
-	/*@0*/uint32_t _0; // u32
-	/*@4*/uint32_t _1; // u32
-	/*@8*/uint32_t _2; // u32
-	/*@12*/uint32_t _3; // u32
-	/*@16*/uint8_t _4; // u8
-	/*@17*/t_ZRTA19Ca _5; // [u8; 19]
-	/*@36*/uint32_t _6; // u32
-	/*@40*/uint32_t _7; // u32
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g) == 44) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g) == 4) ? 1 : -1 ];
-typedef struct t_ZRTA512Ca  { uint8_t  DATA[512]; } t_ZRTA512Ca ; // [u8; 512]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g  {
-	/*@0*/uint64_t _0; // u64
-	/*@8*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *_1; // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-	/*@16*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g _2; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-	/*@40*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g _3; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-	/*@296*/struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g _4; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t/*S*/
-	/*@424*/t_ZRTA512Ca _5; // [u8; 512]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g) == 936) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g  {
-	/*@0*/uint64_t _0; // u64
-	/*@8*/uint64_t _1; // u64
-	/*@16*/uint64_t _2; // u64
-	/*@24*/uint64_t _3; // u64
-	/*@32*/uint64_t _4; // u64
-	/*@40*/uint64_t _5; // u64
-	/*@48*/uint64_t _6; // u64
-	/*@56*/uint64_t _7; // u64
-	/*@64*/uint64_t _8; // u64
-	/*@72*/uint64_t _9; // u64
-	/*@80*/uint64_t _10; // u64
-	/*@88*/uint64_t _11; // u64
-	/*@96*/uint64_t _12; // u64
-	/*@104*/uint64_t _13; // u64
-	/*@112*/uint64_t _14; // u64
-	/*@120*/uint64_t _15; // u64
-	/*@128*/uint64_t _16; // u64
-	/*@136*/uint64_t _17; // u64
-	/*@144*/uint64_t _18; // u64
-	/*@152*/uint64_t _19; // u64
-	/*@160*/uint64_t _20; // u64
-	/*@168*/uint64_t _21; // u64
-	/*@176*/uint64_t _22; // u64
-	/*@184*/uint64_t _23; // u64
-	/*@192*/uint64_t _24; // u64
-	/*@200*/uint64_t _25; // u64
-	/*@208*/uint64_t _26; // u64
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g) == 216) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA32Ce  { uint32_t  DATA[32]; } t_ZRTA32Ce ; // [u32; 32]
-typedef struct t_ZRTA64Ce  { uint32_t  DATA[64]; } t_ZRTA64Ce ; // [u32; 64]
-typedef struct t_ZRTA24Ce  { uint32_t  DATA[24]; } t_ZRTA24Ce ; // [u32; 24]
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g  {
-	/*@0*/uint16_t _0; // u16
-	/*@2*/uint16_t _1; // u16
-	/*@4*/uint16_t _2; // u16
-	/*@6*/uint16_t _3; // u16
-	/*@8*/uint64_t _4; // u64
-	/*@16*/uint64_t _5; // u64
-	/*@24*/uint32_t _6; // u32
-	/*@28*/uint32_t _7; // u32
-	/*@32*/t_ZRTA32Ce _8; // [u32; 32]
-	/*@160*/t_ZRTA64Ce _9; // [u32; 64]
-	/*@416*/t_ZRTA24Ce _10; // [u32; 24]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g) == 512) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g) == 8) ? 1 : -1 ];
-// struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g  {
-	/*@0*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-	/*@216*/int32_t _1; // i32
-	/*@224*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g _2; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-	/*@736*/uint64_t _3; // u64
-	/*@744*/uint64_t _4; // u64
-	/*@752*/uint64_t _5; // u64
-	/*@760*/uint64_t _6; // u64
-	/*@768*/uint64_t _7; // u64
-	/*@776*/int64_t _8; // i64
-	/*@784*/int32_t _9; // i32
-	/*@792*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g *_10; // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-	/*@800*/struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g *_11; // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-	/*@808*/uint64_t _12; // u64
-	/*@816*/t_ZRTA32Cb _13; // [i8; 32]
-	/*@848*/t_ZRTA8Cg _14; // [u64; 8]
-} ;
-typedef char sizeof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g[ (sizeof(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g) == 912) ? 1 : -1 ];
-typedef char alignof_assert_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g[ (ALIGNOF(struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::glob64_t
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8glob64_t0g  {
 	/*@0*/uintptr_t _0; // usize
-	/*@8*/int8_t **_1; // *mut *mut i8
+	/*@8*/uint8_t **_1; // *mut *mut u8
 	/*@16*/uintptr_t _2; // usize
 	/*@24*/int32_t _3; // i32
 	/*@32*/struct e_ZRG2cE9core0_0_03ffi6c_void0g *_4; // *mut ::"core-0_0_0"::ffi::c_void/*E*/
@@ -1594,8 +1442,8 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7regex_t0g  {
 	/*@8*/uintptr_t _1; // usize
 	/*@16*/uintptr_t _2; // usize
 	/*@24*/uint64_t _3; // u64
-	/*@32*/int8_t *_4; // *mut i8
-	/*@40*/int8_t *_5; // *mut i8
+	/*@32*/uint8_t *_4; // *mut u8
+	/*@40*/uint8_t *_5; // *mut u8
 	/*@48*/uintptr_t _6; // usize
 	/*@56*/uint8_t _7; // u8
 } ;
@@ -1615,7 +1463,7 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7rtentry0g  {
 	/*@73*/uint8_t _8; // u8
 	/*@74*/t_ZRTA3Cd _9; // [i16; 3]
 	/*@80*/int16_t _10; // i16
-	/*@88*/int8_t *_11; // *mut i8
+	/*@88*/uint8_t *_11; // *mut u8
 	/*@96*/uint64_t _12; // u64
 	/*@104*/uint64_t _13; // u64
 	/*@112*/uint16_t _14; // u16
@@ -1642,6 +1490,7 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu15statx_timestamp0g  {
 } ;
 typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu15statx_timestamp0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu15statx_timestamp0g) == 16) ? 1 : -1 ];
 typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu15statx_timestamp0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu15statx_timestamp0g) == 8) ? 1 : -1 ];
+typedef struct t_ZRTA12Cg  { uint64_t  DATA[12]; } t_ZRTA12Cg ; // [u64; 12]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::statx
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g  {
 	/*@0*/uint32_t _0; // u32
@@ -1670,7 +1519,6 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g  {
 } ;
 typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g) == 256) ? 1 : -1 ];
 typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA32Ca  { uint8_t  DATA[32]; } t_ZRTA32Ca ; // [u8; 32]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::termios
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7termios0g  {
 	/*@0*/uint32_t _0; // u32
@@ -1720,29 +1568,29 @@ struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5timex0g  {
 } ;
 typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5timex0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5timex0g) == 208) ? 1 : -1 ];
 typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5timex0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5timex0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA4Cb  { int8_t  DATA[4]; } t_ZRTA4Cb ; // [i8; 4]
+typedef struct t_ZRTA4Ca  { uint8_t  DATA[4]; } t_ZRTA4Ca ; // [u8; 4]
 typedef struct t_ZRTA4Cf  { int32_t  DATA[4]; } t_ZRTA4Cf ; // [i32; 4]
-typedef struct t_ZRTA20Cb  { int8_t  DATA[20]; } t_ZRTA20Cb ; // [i8; 20]
+typedef struct t_ZRTA20Ca  { uint8_t  DATA[20]; } t_ZRTA20Ca ; // [u8; 20]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::utmpx
 struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g  {
 	/*@0*/int16_t _0; // i16
 	/*@4*/int32_t _1; // i32
-	/*@8*/t_ZRTA32Cb _2; // [i8; 32]
-	/*@40*/t_ZRTA4Cb _3; // [i8; 4]
-	/*@44*/t_ZRTA32Cb _4; // [i8; 32]
-	/*@76*/t_ZRTA256Cb _5; // [i8; 256]
+	/*@8*/t_ZRTA32Ca _2; // [u8; 32]
+	/*@40*/t_ZRTA4Ca _3; // [u8; 4]
+	/*@44*/t_ZRTA32Ca _4; // [u8; 32]
+	/*@76*/t_ZRTA256Ca _5; // [u8; 256]
 	/*@332*/struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu13__exit_status0g _6; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::__exit_status/*S*/
-	/*@336*/int32_t _7; // i32
-	/*@340*/struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9__timeval0g _8; // ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::__timeval/*S*/
-	/*@348*/t_ZRTA4Cf _9; // [i32; 4]
-	/*@364*/t_ZRTA20Cb _10; // [i8; 20]
+	/*@336*/int64_t _7; // i64
+	/*@344*/struct s_ZRG2cE14libc0_2_95_H194unix7timeval0g _8; // ::"libc-0_2_95_H19"::unix::timeval/*S*/
+	/*@360*/t_ZRTA4Cf _9; // [i32; 4]
+	/*@376*/t_ZRTA20Ca _10; // [u8; 20]
 } ;
-typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g) == 384) ? 1 : -1 ];
-typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g) == 4) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g[ (sizeof(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g) == 400) ? 1 : -1 ];
+typedef char alignof_assert_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g[ (ALIGNOF(struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::if_nameindex
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12if_nameindex0g  {
 	/*@0*/uint32_t _0; // u32
-	/*@8*/int8_t *_1; // *mut i8
+	/*@8*/uint8_t *_1; // *mut u8
 } ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12if_nameindex0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12if_nameindex0g) == 16) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12if_nameindex0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12if_nameindex0g) == 8) ? 1 : -1 ];
@@ -1825,10 +1673,10 @@ typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10itimer
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10itimerspec0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10itimerspec0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::mntent
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6mntent0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t *_1; // *mut i8
-	/*@16*/int8_t *_2; // *mut i8
-	/*@24*/int8_t *_3; // *mut i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t *_1; // *mut u8
+	/*@16*/uint8_t *_2; // *mut u8
+	/*@24*/uint8_t *_3; // *mut u8
 	/*@32*/int32_t _4; // i32
 	/*@36*/int32_t _5; // i32
 } ;
@@ -1868,13 +1716,13 @@ typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11packet
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11packet_mreq0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11packet_mreq0g) == 4) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t *_1; // *mut i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t *_1; // *mut u8
 	/*@16*/uint32_t _2; // u32
 	/*@20*/uint32_t _3; // u32
-	/*@24*/int8_t *_4; // *mut i8
-	/*@32*/int8_t *_5; // *mut i8
-	/*@40*/int8_t *_6; // *mut i8
+	/*@24*/uint8_t *_4; // *mut u8
+	/*@32*/uint8_t *_5; // *mut u8
+	/*@40*/uint8_t *_6; // *mut u8
 } ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g) == 8) ? 1 : -1 ];
@@ -1913,25 +1761,23 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_cond_t0g  {
 } __attribute__((__aligned__(8),)) ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_cond_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_cond_t0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_cond_t0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_cond_t0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA4Ca  { uint8_t  DATA[4]; } t_ZRTA4Ca ; // [u8; 4]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_condattr_t
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g  {
-	/*@0*/t_ZRTA4Ca _0; // [u8; 4]
+	/*@0*/t_ZRTA8Ca _0; // [u8; 8]
 } __attribute__((__aligned__(4),)) ;
-typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g) == 4) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g) == 8) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux18pthread_condattr_t0g) == 4) ? 1 : -1 ];
-typedef struct t_ZRTA40Ca  { uint8_t  DATA[40]; } t_ZRTA40Ca ; // [u8; 40]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_mutex_t
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g  {
-	/*@0*/t_ZRTA40Ca _0; // [u8; 40]
+	/*@0*/t_ZRTA48Ca _0; // [u8; 48]
 } __attribute__((__aligned__(8),)) ;
-typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 40) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 48) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15pthread_mutex_t0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_mutexattr_t
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux19pthread_mutexattr_t0g  {
-	/*@0*/t_ZRTA4Ca _0; // [u8; 4]
+	/*@0*/t_ZRTA8Ca _0; // [u8; 8]
 } __attribute__((__aligned__(4),)) ;
-typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux19pthread_mutexattr_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux19pthread_mutexattr_t0g) == 4) ? 1 : -1 ];
+typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux19pthread_mutexattr_t0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux19pthread_mutexattr_t0g) == 8) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux19pthread_mutexattr_t0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux19pthread_mutexattr_t0g) == 4) ? 1 : -1 ];
 typedef struct t_ZRTA56Ca  { uint8_t  DATA[56]; } t_ZRTA56Ca ; // [u8; 56]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_rwlock_t
@@ -1996,7 +1842,6 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16signalfd_siginfo0g  {
 } ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16signalfd_siginfo0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16signalfd_siginfo0g) == 128) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16signalfd_siginfo0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16signalfd_siginfo0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA14Ca  { uint8_t  DATA[14]; } t_ZRTA14Ca ; // [u8; 14]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::sockaddr_alg
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12sockaddr_alg0g  {
 	/*@0*/uint16_t _0; // u16
@@ -2036,8 +1881,8 @@ typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11sockad
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11sockaddr_vm0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux11sockaddr_vm0g) == 4) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t *_1; // *mut i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t *_1; // *mut u8
 	/*@16*/int64_t _2; // i64
 	/*@24*/int64_t _3; // i64
 	/*@32*/int64_t _4; // i64
@@ -2080,11 +1925,11 @@ struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16uinput_ff_upload0g  {
 } ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16uinput_ff_upload0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16uinput_ff_upload0g) == 104) ? 1 : -1 ];
 typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16uinput_ff_upload0g[ (ALIGNOF(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux16uinput_ff_upload0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA80Cb  { int8_t  DATA[80]; } t_ZRTA80Cb ; // [i8; 80]
+typedef struct t_ZRTA80Ca  { uint8_t  DATA[80]; } t_ZRTA80Ca ; // [u8; 80]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::uinput_setup
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12uinput_setup0g  {
 	/*@0*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8input_id0g _0; // ::"libc-0_2_95_H19"::unix::linux_like::linux::input_id/*S*/
-	/*@8*/t_ZRTA80Cb _1; // [i8; 80]
+	/*@8*/t_ZRTA80Ca _1; // [u8; 80]
 	/*@88*/uint32_t _2; // u32
 } ;
 typedef char sizeof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12uinput_setup0g[ (sizeof(struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12uinput_setup0g) == 92) ? 1 : -1 ];
@@ -2092,7 +1937,7 @@ typedef char alignof_assert_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12uinpu
 typedef struct t_ZRTA64Cf  { int32_t  DATA[64]; } t_ZRTA64Cf ; // [i32; 64]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::linux::uinput_user_dev
 struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux15uinput_user_dev0g  {
-	/*@0*/t_ZRTA80Cb _0; // [i8; 80]
+	/*@0*/t_ZRTA80Ca _0; // [u8; 80]
 	/*@80*/struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux8input_id0g _1; // ::"libc-0_2_95_H19"::unix::linux_like::linux::input_id/*S*/
 	/*@88*/uint32_t _2; // u32
 	/*@92*/t_ZRTA64Cf _3; // [i32; 64]
@@ -2149,11 +1994,11 @@ struct s_ZRG3cE14libc0_2_95_H194unix10linux_like16sockaddr_storage0g  {
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like16sockaddr_storage0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like16sockaddr_storage0g) == 128) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like16sockaddr_storage0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like16sockaddr_storage0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA108Cb  { int8_t  DATA[108]; } t_ZRTA108Cb ; // [i8; 108]
+typedef struct t_ZRTA108Ca  { uint8_t  DATA[108]; } t_ZRTA108Ca ; // [u8; 108]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::sockaddr_un
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11sockaddr_un0g  {
 	/*@0*/uint16_t _0; // u16
-	/*@2*/t_ZRTA108Cb _1; // [i8; 108]
+	/*@2*/t_ZRTA108Ca _1; // [u8; 108]
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like11sockaddr_un0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11sockaddr_un0g) == 110) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like11sockaddr_un0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like11sockaddr_un0g) == 2) ? 1 : -1 ];
@@ -2174,19 +2019,19 @@ struct s_ZRG3cE14libc0_2_95_H194unix10linux_like2tm0g  {
 	/*@28*/int32_t _7; // i32
 	/*@32*/int32_t _8; // i32
 	/*@40*/int64_t _9; // i64
-	/*@48*/int8_t *_10; // *const i8
+	/*@48*/uint8_t *_10; // *const u8
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like2tm0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like2tm0g) == 56) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like2tm0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like2tm0g) == 8) ? 1 : -1 ];
-typedef struct t_ZRTA65Cb  { int8_t  DATA[65]; } t_ZRTA65Cb ; // [i8; 65]
+typedef struct t_ZRTA65Ca  { uint8_t  DATA[65]; } t_ZRTA65Ca ; // [u8; 65]
 // struct ::"libc-0_2_95_H19"::unix::linux_like::utsname
 struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7utsname0g  {
-	/*@0*/t_ZRTA65Cb _0; // [i8; 65]
-	/*@65*/t_ZRTA65Cb _1; // [i8; 65]
-	/*@130*/t_ZRTA65Cb _2; // [i8; 65]
-	/*@195*/t_ZRTA65Cb _3; // [i8; 65]
-	/*@260*/t_ZRTA65Cb _4; // [i8; 65]
-	/*@325*/t_ZRTA65Cb _5; // [i8; 65]
+	/*@0*/t_ZRTA65Ca _0; // [u8; 65]
+	/*@65*/t_ZRTA65Ca _1; // [u8; 65]
+	/*@130*/t_ZRTA65Ca _2; // [u8; 65]
+	/*@195*/t_ZRTA65Ca _3; // [u8; 65]
+	/*@260*/t_ZRTA65Ca _4; // [u8; 65]
+	/*@325*/t_ZRTA65Ca _5; // [u8; 65]
 } ;
 typedef char sizeof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like7utsname0g[ (sizeof(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7utsname0g) == 390) ? 1 : -1 ];
 typedef char alignof_assert_ZRG3cE14libc0_2_95_H194unix10linux_like7utsname0g[ (ALIGNOF(struct s_ZRG3cE14libc0_2_95_H194unix10linux_like7utsname0g) == 1) ? 1 : -1 ];
@@ -2200,8 +2045,8 @@ typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix6pollfd0g[ (sizeof(struct 
 typedef char alignof_assert_ZRG2cE14libc0_2_95_H194unix6pollfd0g[ (ALIGNOF(struct s_ZRG2cE14libc0_2_95_H194unix6pollfd0g) == 4) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::protoent
 struct s_ZRG2cE14libc0_2_95_H194unix8protoent0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t **_1; // *mut *mut i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t **_1; // *mut *mut u8
 	/*@16*/int32_t _2; // i32
 } ;
 typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix8protoent0g[ (sizeof(struct s_ZRG2cE14libc0_2_95_H194unix8protoent0g) == 24) ? 1 : -1 ];
@@ -2236,10 +2081,10 @@ typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix6rusage0g[ (sizeof(struct 
 typedef char alignof_assert_ZRG2cE14libc0_2_95_H194unix6rusage0g[ (ALIGNOF(struct s_ZRG2cE14libc0_2_95_H194unix6rusage0g) == 8) ? 1 : -1 ];
 // struct ::"libc-0_2_95_H19"::unix::servent
 struct s_ZRG2cE14libc0_2_95_H194unix7servent0g  {
-	/*@0*/int8_t *_0; // *mut i8
-	/*@8*/int8_t **_1; // *mut *mut i8
+	/*@0*/uint8_t *_0; // *mut u8
+	/*@8*/uint8_t **_1; // *mut *mut u8
 	/*@16*/int32_t _2; // i32
-	/*@24*/int8_t *_3; // *mut i8
+	/*@24*/uint8_t *_3; // *mut u8
 } ;
 typedef char sizeof_assert_ZRG2cE14libc0_2_95_H194unix7servent0g[ (sizeof(struct s_ZRG2cE14libc0_2_95_H194unix7servent0g) == 32) ? 1 : -1 ];
 typedef char alignof_assert_ZRG2cE14libc0_2_95_H194unix7servent0g[ (ALIGNOF(struct s_ZRG2cE14libc0_2_95_H194unix7servent0g) == 8) ? 1 : -1 ];
@@ -2668,44 +2513,44 @@ static uint64_t * ZRIG3cE9core0_0_05slice4iter7IterMut1gCg14post_inc_start0g(
 		intptr_t arg1 // isize
 		) // -> *mut u64
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_addr
-struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g7si_addr0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_addr
+struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g7si_addr0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_pid
-int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g6si_pid0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_pid
+int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g6si_pid0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i32
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_status
-int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g9si_status0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_status
+int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g9si_status0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i32
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_stime
-int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8si_stime0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_stime
+int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8si_stime0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i64
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_uid
-uint32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g6si_uid0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_uid
+uint32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g6si_uid0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> u32
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_utime
-int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8si_utime0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_utime
+int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8si_utime0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i64
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_value
-struct s_ZRG2cE14libc0_2_95_H194unix6sigval0g  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8si_value0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_value
+struct s_ZRG2cE14libc0_2_95_H194unix6sigval0g  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8si_value0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> ::"libc-0_2_95_H19"::unix::sigval/*S*/
 ;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::sifields
-union u_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8sifields0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8sifields0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::sifields
+union u_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8sifields0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8sifields0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::sifields/*U*/
 ;
 // PROTO extern "Rust" <*const u64 /*- <u64,>*/>::is_null
@@ -3465,6 +3310,215 @@ static void  ZRQG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g2cE
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::align::sem_t/*S*/
 		) // -> ()
 ;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g2cE9core0_0_05clone5Clone0g_K0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g2cE9core0_0_05clone5Clone0g_K0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g2cE9core0_0_05clone5Clone0g_K0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+		) // -> ()
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+;
+// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+		) // -> ()
+;
 // PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::msqid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g  ZRQG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g2cE9core0_0_05clone5Clone0g_I0g(
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::msqid_ds/*S*/
@@ -3496,281 +3550,6 @@ struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g  ZRQG6c
 static void  ZRQG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g2cE9core0_0_05clone5Clone0g10clone_from0g(
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sysinfo/*S*/
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sysinfo/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g2cE9core0_0_05clone5Clone0g_K0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g2cE9core0_0_05clone5Clone0g_K0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-		) // -> ()
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-;
-// PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
 		) // -> ()
 ;
 // PROTO extern "Rust" <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::cmsghdr/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
@@ -4706,7 +4485,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6accept0g(
  asm("accept");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::access
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6access0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
 		) // -> i32
  asm("access");
@@ -4722,7 +4501,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6atexit0g(
  asm("atexit");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::atoi
 extern int32_t  ZRG2cE14libc0_2_95_H194unix4atoi0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("atoi");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::bsearch
@@ -4775,25 +4554,25 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix10cfsetspeed0g(
  asm("cfsetspeed");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::chdir
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5chdir0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("chdir");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::chmod
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5chmod0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1 // u32
 		) // -> i32
  asm("chmod");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::chown
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5chown0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1, // u32
 		uint32_t arg2 // u32
 		) // -> i32
  asm("chown");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::chroot
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6chroot0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("chroot");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::clearerr
@@ -4823,7 +4602,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7connect0g(
  asm("connect");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::creat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5creat0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1 // u32
 		) // -> i32
  asm("creat");
@@ -4845,18 +4624,18 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7dlclose0g(
 		) // -> i32
  asm("dlclose");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::dlerror
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7dlerror0g(void) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7dlerror0g(void) // -> *mut u8
  asm("dlerror");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::dlopen
 extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG2cE14libc0_2_95_H194unix6dlopen0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
  asm("dlopen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::dlsym
 extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG2cE14libc0_2_95_H194unix5dlsym0g(
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg0, // *mut ::"core-0_0_0"::ffi::c_void/*E*/
-		int8_t *arg1 // *const i8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
  asm("dlsym");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::dup
@@ -4875,42 +4654,42 @@ extern void  ZRG2cE14libc0_2_95_H194unix10endservent0g(void) // -> ()
  asm("endservent");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::execl
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5execl0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> i32
  asm("execl");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::execle
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6execle0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> i32
  asm("execle");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::execlp
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6execlp0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> i32
  asm("execlp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::execv
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5execv0g(
-		int8_t *arg0, // *const i8
-		int8_t **arg1 // *const *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t **arg1 // *const *const u8
 		) // -> i32
  asm("execv");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::execve
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6execve0g(
-		int8_t *arg0, // *const i8
-		int8_t **arg1, // *const *const i8
-		int8_t **arg2 // *const *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t **arg1, // *const *const u8
+		uint8_t **arg2 // *const *const u8
 		) // -> i32
  asm("execve");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::execvp
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6execvp0g(
-		int8_t *arg0, // *const i8
-		int8_t **arg1 // *const *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t **arg1 // *const *const u8
 		) // -> i32
  asm("execvp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::exit
@@ -4932,7 +4711,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6fchmod0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fchmodat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8fchmodat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uint32_t arg2, // u32
 		int32_t arg3 // i32
 		) // -> i32
@@ -4947,7 +4726,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6fchown0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fchownat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8fchownat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uint32_t arg2, // u32
 		uint32_t arg3, // u32
 		int32_t arg4 // i32
@@ -4968,7 +4747,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix5fcntl0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fdopen
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG2cE14libc0_2_95_H194unix6fdopen0g(
 		int32_t arg0, // i32
-		int8_t *arg1 // *const i8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("fdopen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fdopendir
@@ -5003,11 +4782,11 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7fgetpos0g(
 		) // -> i32
  asm("fgetpos");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fgets
-extern int8_t * ZRG2cE14libc0_2_95_H194unix5fgets0g(
-		int8_t *arg0, // *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix5fgets0g(
+		uint8_t *arg0, // *mut u8
 		int32_t arg1, // i32
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
-		) // -> *mut i8
+		) // -> *mut u8
  asm("fgets");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fileno
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6fileno0g(
@@ -5024,13 +4803,13 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix5flock0g(
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG2cE14libc0_2_95_H194unix8fmemopen0g(
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg0, // *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t arg1, // usize
-		int8_t *arg2 // *const i8
+		uint8_t *arg2 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("fmemopen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fopen
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG2cE14libc0_2_95_H194unix5fopen0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("fopen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fork
@@ -5045,7 +4824,7 @@ extern int64_t  ZRG2cE14libc0_2_95_H194unix9fpathconf0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fprintf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7fprintf0g(
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> i32
  asm("fprintf");
@@ -5057,7 +4836,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix5fputc0g(
  asm("fputc");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fputs
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5fputs0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
 		) // -> i32
  asm("fputs");
@@ -5081,15 +4860,15 @@ extern void  ZRG2cE14libc0_2_95_H194unix12freeaddrinfo0g(
  asm("freeaddrinfo");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::freopen
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG2cE14libc0_2_95_H194unix7freopen0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("freopen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fscanf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6fscanf0g(
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> i32
  asm("__isoc99_fscanf");
@@ -5116,21 +4895,21 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7fsetpos0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fstat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5fstat0g(
 		int32_t arg0, // i32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
 		) // -> i32
  asm("fstat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fstatat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7fstatat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg2, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
+		uint8_t *arg1, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg2, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
 		int32_t arg3 // i32
 		) // -> i32
  asm("fstatat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fstatvfs
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8fstatvfs0g(
 		int32_t arg0, // i32
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
 		) // -> i32
  asm("fstatvfs");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::fsync
@@ -5163,14 +4942,14 @@ extern uintptr_t  ZRG2cE14libc0_2_95_H194unix6fwrite0g(
 		) // -> usize
  asm("fwrite");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::gai_strerror
-extern int8_t * ZRG2cE14libc0_2_95_H194unix12gai_strerror0g(
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix12gai_strerror0g(
 		int32_t arg0 // i32
-		) // -> *const i8
+		) // -> *const u8
  asm("gai_strerror");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getaddrinfo
 extern int32_t  ZRG2cE14libc0_2_95_H194unix11getaddrinfo0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8addrinfo0g *arg2, // *const ::"libc-0_2_95_H19"::unix::linux_like::addrinfo/*S*/
 		struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8addrinfo0g **arg3 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::addrinfo/*S*/
 		) // -> i32
@@ -5182,18 +4961,18 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7getchar0g(void) // -> i32
 extern int32_t  ZRG2cE14libc0_2_95_H194unix16getchar_unlocked0g(void) // -> i32
  asm("getchar_unlocked");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getcwd
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6getcwd0g(
-		int8_t *arg0, // *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6getcwd0g(
+		uint8_t *arg0, // *mut u8
 		uintptr_t arg1 // usize
-		) // -> *mut i8
+		) // -> *mut u8
  asm("getcwd");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getegid
 extern uint32_t  ZRG2cE14libc0_2_95_H194unix7getegid0g(void) // -> u32
  asm("getegid");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getenv
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6getenv0g(
-		int8_t *arg0 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6getenv0g(
+		uint8_t *arg0 // *const u8
+		) // -> *mut u8
  asm("getenv");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::geteuid
 extern uint32_t  ZRG2cE14libc0_2_95_H194unix7geteuid0g(void) // -> u32
@@ -5209,25 +4988,25 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix9getgroups0g(
  asm("getgroups");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::gethostname
 extern int32_t  ZRG2cE14libc0_2_95_H194unix11gethostname0g(
-		int8_t *arg0, // *mut i8
+		uint8_t *arg0, // *mut u8
 		uintptr_t arg1 // usize
 		) // -> i32
  asm("gethostname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getline
 extern intptr_t  ZRG2cE14libc0_2_95_H194unix7getline0g(
-		int8_t **arg0, // *mut *mut i8
+		uint8_t **arg0, // *mut *mut u8
 		uintptr_t *arg1, // *mut usize
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
 		) // -> isize
  asm("getline");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getlogin
-extern int8_t * ZRG2cE14libc0_2_95_H194unix8getlogin0g(void) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix8getlogin0g(void) // -> *mut u8
  asm("getlogin");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getopt
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6getopt0g(
 		int32_t arg0, // i32
-		int8_t **arg1, // *const *mut i8
-		int8_t *arg2 // *const i8
+		uint8_t **arg1, // *const *mut u8
+		uint8_t *arg2 // *const u8
 		) // -> i32
  asm("getopt");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getpeername
@@ -5253,7 +5032,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7getppid0g(void) // -> i32
  asm("getppid");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getprotobyname
 extern struct s_ZRG2cE14libc0_2_95_H194unix8protoent0g * ZRG2cE14libc0_2_95_H194unix14getprotobyname0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::protoent/*S*/
  asm("getprotobyname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getprotobynumber
@@ -5263,7 +5042,7 @@ extern struct s_ZRG2cE14libc0_2_95_H194unix8protoent0g * ZRG2cE14libc0_2_95_H194
  asm("getprotobynumber");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getpwnam
 extern struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g * ZRG2cE14libc0_2_95_H194unix8getpwnam0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd/*S*/
  asm("getpwnam");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getpwuid
@@ -5279,14 +5058,14 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix9getrusage0g(
  asm("getrusage");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getservbyname
 extern struct s_ZRG2cE14libc0_2_95_H194unix7servent0g * ZRG2cE14libc0_2_95_H194unix13getservbyname0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::servent/*S*/
  asm("getservbyname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getservbyport
 extern struct s_ZRG2cE14libc0_2_95_H194unix7servent0g * ZRG2cE14libc0_2_95_H194unix13getservbyport0g(
 		int32_t arg0, // i32
-		int8_t *arg1 // *const i8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::servent/*S*/
  asm("getservbyport");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::getservent
@@ -5333,14 +5112,14 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7grantpt0g(
 		) // -> i32
  asm("grantpt");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::if_indextoname
-extern int8_t * ZRG2cE14libc0_2_95_H194unix14if_indextoname0g(
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix14if_indextoname0g(
 		uint32_t arg0, // u32
-		int8_t *arg1 // *mut i8
-		) // -> *mut i8
+		uint8_t *arg1 // *mut u8
+		) // -> *mut u8
  asm("if_indextoname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::if_nametoindex
 extern uint32_t  ZRG2cE14libc0_2_95_H194unix14if_nametoindex0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> u32
  asm("if_nametoindex");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::isalnum
@@ -5422,29 +5201,29 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6killpg0g(
  asm("killpg");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::lchown
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6lchown0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1, // u32
 		uint32_t arg2 // u32
 		) // -> i32
  asm("lchown");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::link
 extern int32_t  ZRG2cE14libc0_2_95_H194unix4link0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("link");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linkat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6linkat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
-		int8_t *arg3, // *const i8
+		uint8_t *arg3, // *const u8
 		int32_t arg4 // i32
 		) // -> i32
  asm("linkat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::acct
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like4acct0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("acct");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::bind
@@ -5488,7 +5267,7 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like13clock_settime0g(
  asm("clock_settime");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::creat64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7creat640g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1 // u32
 		) // -> i32
  asm("creat64");
@@ -5504,9 +5283,9 @@ extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG3cE14libc0_2_95_H194unix10lin
  asm("duplocale");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::execvpe
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7execvpe0g(
-		int8_t *arg0, // *const i8
-		int8_t **arg1, // *const *const i8
-		int8_t **arg2 // *const *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t **arg1, // *const *const u8
+		uint8_t **arg2 // *const *const u8
 		) // -> i32
  asm("execvpe");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::fdatasync
@@ -5517,14 +5296,14 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like9fdatasync0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::fexecve
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7fexecve0g(
 		int32_t arg0, // i32
-		int8_t **arg1, // *const *const i8
-		int8_t **arg2 // *const *const i8
+		uint8_t **arg1, // *const *const u8
+		uint8_t **arg2 // *const *const u8
 		) // -> i32
  asm("fexecve");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::forkpty
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7forkpty0g(
 		int32_t *arg0, // *mut i32
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7termios0g *arg2, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::termios/*S*/
 		struct s_ZRG2cE14libc0_2_95_H194unix7winsize0g *arg3 // *const ::"libc-0_2_95_H19"::unix::winsize/*S*/
 		) // -> i32
@@ -5542,33 +5321,33 @@ extern void  ZRG3cE14libc0_2_95_H194unix10linux_like10freelocale0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::fstat64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7fstat640g(
 		int32_t arg0, // i32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
 		) // -> i32
  asm("fstat64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::fstatat64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like9fstatat640g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg2, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
+		uint8_t *arg1, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg2, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
 		int32_t arg3 // i32
 		) // -> i32
  asm("fstatat64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::fstatfs
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7fstatfs0g(
 		int32_t arg0, // i32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
 		) // -> i32
  asm("fstatfs");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::fstatfs64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like9fstatfs640g(
 		int32_t arg0, // i32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
 		) // -> i32
  asm("fstatfs64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::fstatvfs64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like10fstatvfs640g(
 		int32_t arg0, // i32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
 		) // -> i32
  asm("fstatvfs64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::ftruncate64
@@ -5665,7 +5444,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9aio_write0g(
  asm("aio_write");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::atof
 extern double  ZRG4cE14libc0_2_95_H194unix10linux_like5linux4atof0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> f64
  asm("atof");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::clock_nanosleep
@@ -5762,7 +5541,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7eventfd0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::faccessat
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9faccessat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
 		int32_t arg3 // i32
 		) // -> i32
@@ -5798,7 +5577,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9fgetpos640g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::fgetxattr
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9fgetxattr0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2, // *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t arg3 // usize
 		) // -> isize
@@ -5806,14 +5585,14 @@ extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9fgetxattr0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::flistxattr
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10flistxattr0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> isize
  asm("flistxattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::fopen64
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux7fopen640g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("fopen64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::fread_unlocked
@@ -5827,13 +5606,13 @@ extern uintptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux14fread_unlocked0
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::fremovexattr
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12fremovexattr0g(
 		int32_t arg0, // i32
-		int8_t *arg1 // *const i8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("fremovexattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::freopen64
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux9freopen640g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("freopen64");
@@ -5853,7 +5632,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9fsetpos640g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::fsetxattr
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9fsetxattr0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2, // *const ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t arg3, // usize
 		int32_t arg4 // i32
@@ -5866,7 +5645,7 @@ extern int64_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8ftello640g(
  asm("ftello64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::ftok
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux4ftok0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
 		) // -> i32
  asm("ftok");
@@ -5878,7 +5657,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7futimes0g(
  asm("futimes");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getdomainname
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux13getdomainname0g(
-		int8_t *arg0, // *mut i8
+		uint8_t *arg0, // *mut u8
 		uintptr_t arg1 // usize
 		) // -> i32
  asm("getdomainname");
@@ -5897,28 +5676,28 @@ extern struct s_ZRG2cE14libc0_2_95_H194unix5group0g * ZRG4cE14libc0_2_95_H194uni
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10getgrgid_r0g(
 		uint32_t arg0, // u32
 		struct s_ZRG2cE14libc0_2_95_H194unix5group0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::group/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3, // usize
 		struct s_ZRG2cE14libc0_2_95_H194unix5group0g **arg4 // *mut *mut ::"libc-0_2_95_H19"::unix::group/*S*/
 		) // -> i32
  asm("getgrgid_r");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getgrnam
 extern struct s_ZRG2cE14libc0_2_95_H194unix5group0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux8getgrnam0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::group/*S*/
  asm("getgrnam");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getgrnam_r
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10getgrnam_r0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct s_ZRG2cE14libc0_2_95_H194unix5group0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::group/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3, // usize
 		struct s_ZRG2cE14libc0_2_95_H194unix5group0g **arg4 // *mut *mut ::"libc-0_2_95_H19"::unix::group/*S*/
 		) // -> i32
  asm("getgrnam_r");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getgrouplist
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12getgrouplist0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1, // u32
 		uint32_t *arg2, // *mut u32
 		int32_t *arg3 // *mut i32
@@ -5939,9 +5718,9 @@ extern struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6mntent0g * ZRG4cE1
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11getnameinfo0g(
 		struct s_ZRG3cE14libc0_2_95_H194unix10linux_like8sockaddr0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::sockaddr/*S*/
 		uint32_t arg1, // u32
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uint32_t arg3, // u32
-		int8_t *arg4, // *mut i8
+		uint8_t *arg4, // *mut u8
 		uint32_t arg5, // u32
 		int32_t arg6 // i32
 		) // -> i32
@@ -5951,9 +5730,9 @@ extern struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g * ZRG4cE1
  asm("getpwent");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getpwnam_r
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10getpwnam_r0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g **arg4 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd/*S*/
 		) // -> i32
@@ -5962,7 +5741,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10getpwnam_r0g(
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10getpwuid_r0g(
 		uint32_t arg0, // u32
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g **arg4 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd/*S*/
 		) // -> i32
@@ -5972,14 +5751,14 @@ extern struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g * ZRG4cE14l
  asm("getspent");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getspnam
 extern struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux8getspnam0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
  asm("getspnam");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getspnam_r
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10getspnam_r0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g **arg4 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
 		) // -> i32
@@ -5989,17 +5768,17 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux6gettid0g(void) // 
  asm("gettid");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::getxattr
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8getxattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2, // *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t arg3 // usize
 		) // -> isize
  asm("getxattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::glob
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux4glob0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
-		struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCbCfCf arg2, // ::"core-0_0_0"::option::Option<extern "C" fn(*const i8, i32, ) -> i32,>/*E*/
+		struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCaCfCf arg2, // ::"core-0_0_0"::option::Option<extern "C" fn(*const u8, i32, ) -> i32,>/*E*/
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6glob_t0g *arg3 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::glob_t/*S*/
 		) // -> i32
  asm("glob");
@@ -6013,33 +5792,8 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8adjtimex0g(
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5timex0g *arg0 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::timex/*S*/
 		) // -> i32
  asm("adjtimex");
-// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::getcontext
-extern int32_t  ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410getcontext0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		) // -> i32
- asm("getcontext");
-// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ioperm
-extern int32_t  ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646ioperm0g(
-		uint64_t arg0, // u64
-		uint64_t arg1, // u64
-		int32_t arg2 // i32
-		) // -> i32
- asm("ioperm");
-// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::iopl
-extern int32_t  ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644iopl0g(
-		int32_t arg0 // i32
-		) // -> i32
- asm("iopl");
-// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::makecontext
-extern void  ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6411makecontext0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		t_ZRTFe1C0T0 arg1, // extern "C" fn() -> ()
-		int32_t arg2, // i32
-		...
-		) // -> ()
- asm("makecontext");
-// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::sysctl
-extern int32_t  ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x326sysctl0g(
+// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sysctl
+extern int32_t  ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646sysctl0g(
 		int32_t *arg0, // *mut i32
 		int32_t arg1, // i32
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2, // *mut ::"core-0_0_0"::ffi::c_void/*E*/
@@ -6048,17 +5802,6 @@ extern int32_t  ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not
 		uintptr_t arg5 // usize
 		) // -> i32
  asm("sysctl");
-// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::setcontext
-extern int32_t  ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410setcontext0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0 // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		) // -> i32
- asm("setcontext");
-// EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::swapcontext
-extern int32_t  ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6411swapcontext0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg1 // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		) // -> i32
- asm("swapcontext");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::backtrace
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9backtrace0g(
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g **arg0, // *mut *mut ::"core-0_0_0"::ffi::c_void/*E*/
@@ -6085,7 +5828,7 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu6dlinfo0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::dlmopen
 extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7dlmopen0g(
 		int64_t arg0, // i64
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2 // i32
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
  asm("dlmopen");
@@ -6104,14 +5847,14 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu13fanotify_mark
 		uint32_t arg1, // u32
 		uint64_t arg2, // u64
 		int32_t arg3, // i32
-		int8_t *arg4 // *const i8
+		uint8_t *arg4 // *const u8
 		) // -> i32
  asm("fanotify_mark");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::fgetspent_r
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu11fgetspent_r0g(
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g **arg4 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
 		) // -> i32
@@ -6124,7 +5867,7 @@ extern uint64_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9getauxval0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::getgrent_r
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu10getgrent_r0g(
 		struct s_ZRG2cE14libc0_2_95_H194unix5group0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::group/*S*/
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2, // usize
 		struct s_ZRG2cE14libc0_2_95_H194unix5group0g **arg3 // *mut *mut ::"libc-0_2_95_H19"::unix::group/*S*/
 		) // -> i32
@@ -6141,7 +5884,7 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5getpt0g(void) 
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::getpwent_r
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu10getpwent_r0g(
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd/*S*/
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6passwd0g **arg3 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::passwd/*S*/
 		) // -> i32
@@ -6168,7 +5911,7 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu11getrlimit640g
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::getspent_r
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu10getspent_r0g(
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g **arg3 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
 		) // -> i32
@@ -6194,9 +5937,9 @@ extern struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5utmpx0g * ZRG5
  asm("getutxline");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::glob64
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu6glob640g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
-		struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCbCfCf arg2, // ::"core-0_0_0"::option::Option<extern "C" fn(*const i8, i32, ) -> i32,>/*E*/
+		struct e_ZRG2cE9core0_0_06option6Option1gFe1C2PsCaCfCf arg2, // ::"core-0_0_0"::option::Option<extern "C" fn(*const u8, i32, ) -> i32,>/*E*/
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8glob64_t0g *arg3 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::glob64_t/*S*/
 		) // -> i32
  asm("glob64");
@@ -6271,14 +6014,14 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9prlimit640g(
  asm("prlimit64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::pthread_attr_getaffinity_np
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu27pthread_attr_getaffinity_np0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		uintptr_t arg1, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux9cpu_set_t0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::cpu_set_t/*S*/
 		) // -> i32
  asm("pthread_attr_getaffinity_np");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::pthread_attr_setaffinity_np
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu27pthread_attr_setaffinity_np0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		uintptr_t arg1, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux9cpu_set_t0g *arg2 // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::cpu_set_t/*S*/
 		) // -> i32
@@ -6293,7 +6036,7 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu22pthread_getaf
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::pthread_getname_np
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu18pthread_getname_np0g(
 		uint64_t arg0, // u64
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> i32
  asm("pthread_getname_np");
@@ -6319,7 +6062,7 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu22pthread_setaf
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::pthread_setname_np
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu18pthread_setname_np0g(
 		uint64_t arg0, // u64
-		int8_t *arg1 // *const i8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("pthread_setname_np");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::ptrace
@@ -6363,9 +6106,9 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8recvmmsg0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::renameat2
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9renameat20g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
-		int8_t *arg3, // *const i8
+		uint8_t *arg3, // *const u8
 		uint32_t arg4 // u32
 		) // -> i32
  asm("renameat2");
@@ -6404,9 +6147,9 @@ extern void  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9setutxent0g(void)
  asm("setutxent");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::sgetspent_r
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu11sgetspent_r0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux4spwd0g **arg4 // *mut *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::spwd/*S*/
 		) // -> i32
@@ -6414,7 +6157,7 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu11sgetspent_r0g
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::statx
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
 		uint32_t arg3, // u32
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g *arg4 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::statx/*S*/
@@ -6422,26 +6165,26 @@ extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu5statx0g(
  asm("statx");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::utmpname
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8utmpname0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("utmpname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::utmpxname
 extern int32_t  ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9utmpxname0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("utmpxname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::hasmntopt
-extern int8_t * ZRG4cE14libc0_2_95_H194unix10linux_like5linux9hasmntopt0g(
+extern uint8_t * ZRG4cE14libc0_2_95_H194unix10linux_like5linux9hasmntopt0g(
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux6mntent0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::mntent/*S*/
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("hasmntopt");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::iconv
 extern uintptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux5iconv0g(
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg0, // *mut ::"core-0_0_0"::ffi::c_void/*E*/
-		int8_t **arg1, // *mut *mut i8
+		uint8_t **arg1, // *mut *mut u8
 		uintptr_t *arg2, // *mut usize
-		int8_t **arg3, // *mut *mut i8
+		uint8_t **arg3, // *mut *mut u8
 		uintptr_t *arg4 // *mut usize
 		) // -> usize
  asm("iconv");
@@ -6452,8 +6195,8 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11iconv_close0g(
  asm("iconv_close");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::iconv_open
 extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux10iconv_open0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
  asm("iconv_open");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::if_freenameindex
@@ -6466,14 +6209,14 @@ extern struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux12if_nameindex0g * 
  asm("if_nameindex");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::initgroups
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10initgroups0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1 // u32
 		) // -> i32
  asm("initgroups");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::inotify_add_watch
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux17inotify_add_watch0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uint32_t arg2 // u32
 		) // -> i32
  asm("inotify_add_watch");
@@ -6498,8 +6241,8 @@ extern int64_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux4labs0g(
  asm("labs");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::lgetxattr
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9lgetxattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2, // *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t arg3 // usize
 		) // -> isize
@@ -6514,28 +6257,28 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10lio_listio0g(
  asm("lio_listio");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::listxattr
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9listxattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *mut i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> isize
  asm("listxattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::llistxattr
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10llistxattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *mut i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> isize
  asm("llistxattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::lremovexattr
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12lremovexattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("lremovexattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::lsetxattr
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9lsetxattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2, // *const ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t arg3, // usize
 		int32_t arg4 // i32
@@ -6543,7 +6286,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9lsetxattr0g(
  asm("lsetxattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::lutimes
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7lutimes0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct s_ZRG2cE14libc0_2_95_H194unix7timeval0g *arg1 // *const ::"libc-0_2_95_H19"::unix::timeval/*S*/
 		) // -> i32
  asm("lutimes");
@@ -6557,34 +6300,34 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7madvise0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mkfifoat
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8mkfifoat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uint32_t arg2 // u32
 		) // -> i32
  asm("mkfifoat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mkostemp
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8mkostemp0g(
-		int8_t *arg0, // *mut i8
+		uint8_t *arg0, // *mut u8
 		int32_t arg1 // i32
 		) // -> i32
  asm("mkostemp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mkostemps
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9mkostemps0g(
-		int8_t *arg0, // *mut i8
+		uint8_t *arg0, // *mut u8
 		int32_t arg1, // i32
 		int32_t arg2 // i32
 		) // -> i32
  asm("mkostemps");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mkstemps
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8mkstemps0g(
-		int8_t *arg0, // *mut i8
+		uint8_t *arg0, // *mut u8
 		int32_t arg1 // i32
 		) // -> i32
  asm("mkstemps");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mount
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux5mount0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
-		int8_t *arg2, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
+		uint8_t *arg2, // *const u8
 		uint64_t arg3, // u64
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg4 // *const ::"core-0_0_0"::ffi::c_void/*E*/
 		) // -> i32
@@ -6609,7 +6352,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10mq_getattr0g(
  asm("mq_getattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mq_open
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7mq_open0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
 		...
 		) // -> i32
@@ -6617,7 +6360,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7mq_open0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mq_receive
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10mq_receive0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2, // usize
 		uint32_t *arg3 // *mut u32
 		) // -> isize
@@ -6625,7 +6368,7 @@ extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10mq_receive0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mq_send
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7mq_send0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2, // usize
 		uint32_t arg3 // u32
 		) // -> i32
@@ -6640,7 +6383,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10mq_setattr0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mq_timedreceive
 extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux15mq_timedreceive0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2, // usize
 		uint32_t *arg3, // *mut u32
 		struct s_ZRG2cE14libc0_2_95_H194unix8timespec0g *arg4 // *const ::"libc-0_2_95_H19"::unix::timespec/*S*/
@@ -6649,7 +6392,7 @@ extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux15mq_timedreceive0
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mq_timedsend
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12mq_timedsend0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2, // usize
 		uint32_t arg3, // u32
 		struct s_ZRG2cE14libc0_2_95_H194unix8timespec0g *arg4 // *const ::"libc-0_2_95_H19"::unix::timespec/*S*/
@@ -6657,7 +6400,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12mq_timedsend0g(
  asm("mq_timedsend");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mq_unlink
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux9mq_unlink0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("mq_unlink");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::mremap
@@ -6707,15 +6450,15 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux5msync0g(
 		) // -> i32
  asm("msync");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::nl_langinfo
-extern int8_t * ZRG4cE14libc0_2_95_H194unix10linux_like5linux11nl_langinfo0g(
+extern uint8_t * ZRG4cE14libc0_2_95_H194unix10linux_like5linux11nl_langinfo0g(
 		int32_t arg0 // i32
-		) // -> *mut i8
+		) // -> *mut u8
  asm("nl_langinfo");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::nl_langinfo_l
-extern int8_t * ZRG4cE14libc0_2_95_H194unix10linux_like5linux13nl_langinfo_l0g(
+extern uint8_t * ZRG4cE14libc0_2_95_H194unix10linux_like5linux13nl_langinfo_l0g(
 		int32_t arg0, // i32
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg1 // *mut ::"core-0_0_0"::ffi::c_void/*E*/
-		) // -> *mut i8
+		) // -> *mut u8
  asm("nl_langinfo_l");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::personality
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11personality0g(
@@ -6724,8 +6467,8 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11personality0g(
  asm("personality");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::popen
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux5popen0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("popen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_fallocate
@@ -6752,11 +6495,11 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux13posix_madvise0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawn
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11posix_spawn0g(
 		int32_t *arg0, // *mut i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux26posix_spawn_file_actions_t0g *arg2, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawn_file_actions_t/*S*/
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux17posix_spawnattr_t0g *arg3, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawnattr_t/*S*/
-		int8_t **arg4, // *const *mut i8
-		int8_t **arg5 // *const *mut i8
+		uint8_t **arg4, // *const *mut u8
+		uint8_t **arg5 // *const *mut u8
 		) // -> i32
  asm("posix_spawn");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawn_file_actions_addclose
@@ -6776,7 +6519,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux32posix_spawn_file_
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux32posix_spawn_file_actions_addopen0g(
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux26posix_spawn_file_actions_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawn_file_actions_t/*S*/
 		int32_t arg1, // i32
-		int8_t *arg2, // *const i8
+		uint8_t *arg2, // *const u8
 		int32_t arg3, // i32
 		uint32_t arg4 // u32
 		) // -> i32
@@ -6876,11 +6619,11 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux26posix_spawnattr_s
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawnp
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12posix_spawnp0g(
 		int32_t *arg0, // *mut i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux26posix_spawn_file_actions_t0g *arg2, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawn_file_actions_t/*S*/
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux17posix_spawnattr_t0g *arg3, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::posix_spawnattr_t/*S*/
-		int8_t **arg4, // *const *mut i8
-		int8_t **arg5 // *const *mut i8
+		uint8_t **arg4, // *const *mut u8
+		uint8_t **arg5 // *const *mut u8
 		) // -> i32
  asm("posix_spawnp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::ppoll
@@ -6934,7 +6677,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_atfork0g(
  asm("pthread_atfork");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_attr_getguardsize
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux25pthread_attr_getguardsize0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		uintptr_t *arg1 // *mut usize
 		) // -> i32
  asm("pthread_attr_getguardsize");
@@ -6952,7 +6695,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux27pthread_condattr_
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::pthread_create
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux14pthread_create0g(
 		uint64_t *arg0, // *mut u64
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg1, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg1, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		t_ZRTFe1C1PuG2cE9core0_0_03ffi6c_void0gPuG2c_A_B_C0g arg2, // extern "C" fn(*mut ::"core-0_0_0"::ffi::c_void/*E*/, ) -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg3 // *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		) // -> i32
@@ -7013,9 +6756,9 @@ extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7pwritev0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::quotactl
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8quotactl0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
-		int8_t *arg3 // *mut i8
+		uint8_t *arg3 // *mut u8
 		) // -> i32
  asm("quotactl");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::rand
@@ -7046,7 +6789,7 @@ extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8recvfrom0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::regcomp
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7regcomp0g(
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7regex_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::regex_t/*S*/
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2 // i32
 		) // -> i32
  asm("regcomp");
@@ -7054,14 +6797,14 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7regcomp0g(
 extern uintptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8regerror0g(
 		int32_t arg0, // i32
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7regex_t0g *arg1, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::regex_t/*S*/
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3 // usize
 		) // -> usize
  asm("regerror");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::regexec
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7regexec0g(
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7regex_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::regex_t/*S*/
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2, // usize
 		struct s_ZRG4cE14libc0_2_95_H194unix10linux_like5linux10regmatch_t0g *arg3, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::regmatch_t/*S*/
 		int32_t arg4 // i32
@@ -7083,8 +6826,8 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux16remap_file_pages0
  asm("remap_file_pages");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::removexattr
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11removexattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("removexattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::sched_get_priority_max
@@ -7160,7 +6903,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12sem_getvalue0g(
  asm("sem_getvalue");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::sem_open
 extern struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux8sem_open0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
 		...
 		) // -> *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::align::sem_t/*S*/
@@ -7173,7 +6916,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux13sem_timedwait0g(
  asm("sem_timedwait");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::sem_unlink
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10sem_unlink0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("sem_unlink");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::semctl
@@ -7216,7 +6959,7 @@ extern intptr_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10sendfile640g(
  asm("sendfile64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::setdomainname
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux13setdomainname0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uintptr_t arg1 // usize
 		) // -> i32
  asm("setdomainname");
@@ -7235,14 +6978,14 @@ extern void  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8setgrent0g(void) // -
  asm("setgrent");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::sethostname
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11sethostname0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uintptr_t arg1 // usize
 		) // -> i32
  asm("sethostname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::setmntent
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG4cE14libc0_2_95_H194unix10linux_like5linux9setmntent0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("setmntent");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::setns
@@ -7265,8 +7008,8 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12settimeofday0g(
  asm("settimeofday");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::setxattr
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8setxattr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2, // *const ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t arg3, // usize
 		int32_t arg4 // i32
@@ -7274,14 +7017,14 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8setxattr0g(
  asm("setxattr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::shm_open
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux8shm_open0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
 		uint32_t arg2 // u32
 		) // -> i32
  asm("shm_open");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::shm_unlink
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10shm_unlink0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("shm_unlink");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::shmat
@@ -7295,7 +7038,7 @@ extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG4cE14libc0_2_95_H194unix10lin
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux6shmctl0g(
 		int32_t arg0, // i32
 		int32_t arg1, // i32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
 		) // -> i32
  asm("shmctl");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::shmdt
@@ -7312,8 +7055,8 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux6shmget0g(
  asm("shmget");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::sigaltstack
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11sigaltstack0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
 		) // -> i32
  asm("sigaltstack");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::signalfd
@@ -7331,7 +7074,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10sigsuspend0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::sigtimedwait
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux12sigtimedwait0g(
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg1, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		struct s_ZRG2cE14libc0_2_95_H194unix8timespec0g *arg2 // *const ::"libc-0_2_95_H19"::unix::timespec/*S*/
 		) // -> i32
  asm("sigtimedwait");
@@ -7344,7 +7087,7 @@ extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7sigwait0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::sigwaitinfo
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux11sigwaitinfo0g(
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648sigset_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sigset_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i32
  asm("sigwaitinfo");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::splice
@@ -7365,18 +7108,18 @@ extern void  ZRG4cE14libc0_2_95_H194unix10linux_like5linux5srand0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::strerror_r
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux10strerror_r0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> i32
  asm("__xpg_strerror_r");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::swapoff
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7swapoff0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("swapoff");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::swapon
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux6swapon0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
 		) // -> i32
  asm("swapon");
@@ -7445,12 +7188,12 @@ extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG4cE14libc0_2_95_H194unix
  asm("tmpfile64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::umount
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux6umount0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("umount");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::linux::umount2
 extern int32_t  ZRG4cE14libc0_2_95_H194unix10linux_like5linux7umount20g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
 		) // -> i32
  asm("umount2");
@@ -7484,8 +7227,8 @@ extern int64_t  ZRG3cE14libc0_2_95_H194unix10linux_like7lseek640g(
  asm("lseek64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::lstat64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7lstat640g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
 		) // -> i32
  asm("lstat64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::memalign
@@ -7511,7 +7254,7 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7mincore0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::mknodat
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7mknodat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uint32_t arg2, // u32
 		uint64_t arg3 // u64
 		) // -> i32
@@ -7529,13 +7272,13 @@ extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG3cE14libc0_2_95_H194unix10lin
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::newlocale
 extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG3cE14libc0_2_95_H194unix10linux_like9newlocale0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g *arg2 // *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
  asm("newlocale");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::open64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like6open640g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
 		...
 		) // -> i32
@@ -7543,7 +7286,7 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like6open640g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::openat64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like8openat640g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
 		...
 		) // -> i32
@@ -7552,7 +7295,7 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like8openat640g(
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like7openpty0g(
 		int32_t *arg0, // *mut i32
 		int32_t *arg1, // *mut i32
-		int8_t *arg2, // *mut i8
+		uint8_t *arg2, // *mut u8
 		struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu7termios0g *arg3, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::termios/*S*/
 		struct s_ZRG2cE14libc0_2_95_H194unix7winsize0g *arg4 // *const ::"libc-0_2_95_H19"::unix::winsize/*S*/
 		) // -> i32
@@ -7597,7 +7340,7 @@ extern intptr_t  ZRG3cE14libc0_2_95_H194unix10linux_like8preadv640g(
  asm("preadv64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::pthread_attr_getstack
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like21pthread_attr_getstack0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		struct e_ZRG2cE9core0_0_03ffi6c_void0g **arg1, // *mut *mut ::"core-0_0_0"::ffi::c_void/*E*/
 		uintptr_t *arg2 // *mut usize
 		) // -> i32
@@ -7623,7 +7366,7 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like27pthread_condattr_setpsh
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::pthread_getattr_np
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like18pthread_getattr_np0g(
 		uint64_t arg0, // u64
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		) // -> i32
  asm("pthread_getattr_np");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::pthread_mutexattr_setpshared
@@ -7647,7 +7390,7 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like29pthread_rwlockattr_setp
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::ptsname_r
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like9ptsname_r0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> i32
  asm("ptsname_r");
@@ -7751,31 +7494,31 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like8setreuid0g(
  asm("setreuid");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::stat64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like6stat640g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
 		) // -> i32
  asm("stat64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::statfs
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like6statfs0g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
 		) // -> i32
  asm("statfs");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::statfs64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like8statfs640g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
 		) // -> i32
  asm("statfs64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::statvfs64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like9statvfs640g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
 		) // -> i32
  asm("statvfs64");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::truncate64
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like10truncate640g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int64_t arg1 // i64
 		) // -> i32
  asm("truncate64");
@@ -7792,7 +7535,7 @@ extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG3cE14libc0_2_95_H194unix10lin
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::linux_like::utimensat
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like9utimensat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		struct s_ZRG2cE14libc0_2_95_H194unix8timespec0g *arg2, // *const ::"libc-0_2_95_H19"::unix::timespec/*S*/
 		int32_t arg3 // i32
 		) // -> i32
@@ -7812,7 +7555,7 @@ extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like5wait40g(
 extern int32_t  ZRG3cE14libc0_2_95_H194unix10linux_like6waitid0g(
 		uint32_t arg0, // u32
 		uint32_t arg1, // u32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg2, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg2, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		int32_t arg3 // i32
 		) // -> i32
  asm("waitid");
@@ -7859,8 +7602,8 @@ extern int64_t  ZRG2cE14libc0_2_95_H194unix5lseek0g(
  asm("lseek");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::lstat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5lstat0g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
 		) // -> i32
  asm("lstat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::malloc
@@ -7905,38 +7648,38 @@ extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG2cE14libc0_2_95_H194unix6mems
  asm("memset");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::mkdir
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5mkdir0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1 // u32
 		) // -> i32
  asm("mkdir");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::mkdirat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7mkdirat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		uint32_t arg2 // u32
 		) // -> i32
  asm("mkdirat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::mkdtemp
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7mkdtemp0g(
-		int8_t *arg0 // *mut i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7mkdtemp0g(
+		uint8_t *arg0 // *mut u8
+		) // -> *mut u8
  asm("mkdtemp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::mkfifo
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6mkfifo0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1 // u32
 		) // -> i32
  asm("mkfifo");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::mknod
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5mknod0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uint32_t arg1, // u32
 		uint64_t arg2 // u64
 		) // -> i32
  asm("mknod");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::mkstemp
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7mkstemp0g(
-		int8_t *arg0 // *mut i8
+		uint8_t *arg0 // *mut u8
 		) // -> i32
  asm("mkstemp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::mktime
@@ -7993,46 +7736,46 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix4nice0g(
  asm("nice");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::open
 extern int32_t  ZRG2cE14libc0_2_95_H194unix4open0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
 		...
 		) // -> i32
  asm("open");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::open_memstream
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG2cE14libc0_2_95_H194unix14open_memstream0g(
-		int8_t **arg0, // *mut *mut i8
+		uint8_t **arg0, // *mut *mut u8
 		uintptr_t *arg1 // *mut usize
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("open_memstream");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::open_wmemstream
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG2cE14libc0_2_95_H194unix15open_wmemstream0g(
-		int32_t **arg0, // *mut *mut i32
+		uint32_t **arg0, // *mut *mut u32
 		uintptr_t *arg1 // *mut usize
 		) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("open_wmemstream");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::openat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6openat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
 		...
 		) // -> i32
  asm("openat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::opendir
 extern struct e_ZRG2cE14libc0_2_95_H194unix3DIR0g * ZRG2cE14libc0_2_95_H194unix7opendir0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> *mut ::"libc-0_2_95_H19"::unix::DIR/*E*/
  asm("opendir");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::openlog
 extern void  ZRG2cE14libc0_2_95_H194unix7openlog0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
 		int32_t arg2 // i32
 		) // -> ()
  asm("openlog");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::pathconf
 extern int64_t  ZRG2cE14libc0_2_95_H194unix8pathconf0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
 		) // -> i64
  asm("pathconf");
@@ -8046,7 +7789,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6pclose0g(
  asm("pclose");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::perror
 extern void  ZRG2cE14libc0_2_95_H194unix6perror0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> ()
  asm("perror");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::pipe
@@ -8083,7 +7826,7 @@ extern intptr_t  ZRG2cE14libc0_2_95_H194unix5pread0g(
  asm("pread");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::printf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6printf0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		...
 		) // -> i32
  asm("printf");
@@ -8099,23 +7842,23 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7pselect0g(
  asm("pselect");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::pthread_attr_destroy
 extern int32_t  ZRG2cE14libc0_2_95_H194unix20pthread_attr_destroy0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		) // -> i32
  asm("pthread_attr_destroy");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::pthread_attr_init
 extern int32_t  ZRG2cE14libc0_2_95_H194unix17pthread_attr_init0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		) // -> i32
  asm("pthread_attr_init");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::pthread_attr_setdetachstate
 extern int32_t  ZRG2cE14libc0_2_95_H194unix27pthread_attr_setdetachstate0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		int32_t arg1 // i32
 		) // -> i32
  asm("pthread_attr_setdetachstate");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::pthread_attr_setstacksize
 extern int32_t  ZRG2cE14libc0_2_95_H194unix25pthread_attr_setstacksize0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
 		uintptr_t arg1 // usize
 		) // -> i32
  asm("pthread_attr_setstacksize");
@@ -8293,9 +8036,9 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix19pthread_setspecific0g(
 		) // -> i32
  asm("pthread_setspecific");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::ptsname
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7ptsname0g(
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7ptsname0g(
 		int32_t arg0 // i32
-		) // -> *mut i8
+		) // -> *mut u8
  asm("ptsname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::putchar
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7putchar0g(
@@ -8309,12 +8052,12 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix16putchar_unlocked0g(
  asm("putchar_unlocked");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::putenv
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6putenv0g(
-		int8_t *arg0 // *mut i8
+		uint8_t *arg0 // *mut u8
 		) // -> i32
  asm("putenv");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::puts
 extern int32_t  ZRG2cE14libc0_2_95_H194unix4puts0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("puts");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::pwrite
@@ -8359,16 +8102,16 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix9readdir_r0g(
  asm("readdir_r");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::readlink
 extern intptr_t  ZRG2cE14libc0_2_95_H194unix8readlink0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *mut i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> isize
  asm("readlink");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::readlinkat
 extern intptr_t  ZRG2cE14libc0_2_95_H194unix10readlinkat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
-		int8_t *arg2, // *mut i8
+		uint8_t *arg1, // *const u8
+		uint8_t *arg2, // *mut u8
 		uintptr_t arg3 // usize
 		) // -> isize
  asm("readlinkat");
@@ -8379,10 +8122,10 @@ extern struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRG2cE14libc0_2_95_H194unix7real
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
  asm("realloc");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::realpath
-extern int8_t * ZRG2cE14libc0_2_95_H194unix8realpath0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *mut i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix8realpath0g(
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *mut u8
+		) // -> *mut u8
  asm("realpath");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::recv
 extern intptr_t  ZRG2cE14libc0_2_95_H194unix4recv0g(
@@ -8394,21 +8137,21 @@ extern intptr_t  ZRG2cE14libc0_2_95_H194unix4recv0g(
  asm("recv");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::remove
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6remove0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("remove");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::rename
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6rename0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("rename");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::renameat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8renameat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2, // i32
-		int8_t *arg3 // *const i8
+		uint8_t *arg3 // *const u8
 		) // -> i32
  asm("renameat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::res_init
@@ -8426,12 +8169,12 @@ extern void  ZRG2cE14libc0_2_95_H194unix9rewinddir0g(
  asm("rewinddir");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::rmdir
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5rmdir0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("rmdir");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::scanf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5scanf0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		...
 		) // -> i32
  asm("__isoc99_scanf");
@@ -8483,7 +8226,7 @@ extern intptr_t  ZRG2cE14libc0_2_95_H194unix6sendto0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::setbuf
 extern void  ZRG2cE14libc0_2_95_H194unix6setbuf0g(
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
-		int8_t *arg1 // *mut i8
+		uint8_t *arg1 // *mut u8
 		) // -> ()
  asm("setbuf");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::setegid
@@ -8493,8 +8236,8 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7setegid0g(
  asm("setegid");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::setenv
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6setenv0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		int32_t arg2 // i32
 		) // -> i32
  asm("setenv");
@@ -8509,10 +8252,10 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6setgid0g(
 		) // -> i32
  asm("setgid");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::setlocale
-extern int8_t * ZRG2cE14libc0_2_95_H194unix9setlocale0g(
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix9setlocale0g(
 		int32_t arg0, // i32
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("setlocale");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::setlogmask
 extern int32_t  ZRG2cE14libc0_2_95_H194unix10setlogmask0g(
@@ -8550,7 +8293,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6setuid0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::setvbuf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7setvbuf0g(
 		struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g *arg0, // *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		int32_t arg2, // i32
 		uintptr_t arg3 // usize
 		) // -> i32
@@ -8564,8 +8307,8 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix8shutdown0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::sigaction
 extern int32_t  ZRG2cE14libc0_2_95_H194unix9sigaction0g(
 		int32_t arg0, // i32
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg1, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg1, // *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg2 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
 		) // -> i32
  asm("sigaction");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::sigaddset
@@ -8621,9 +8364,9 @@ extern uint32_t  ZRG2cE14libc0_2_95_H194unix5sleep0g(
  asm("sleep");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::snprintf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8snprintf0g(
-		int8_t *arg0, // *mut i8
+		uint8_t *arg0, // *mut u8
 		uintptr_t arg1, // usize
-		int8_t *arg2, // *const i8
+		uint8_t *arg2, // *const u8
 		...
 		) // -> i32
  asm("snprintf");
@@ -8644,206 +8387,206 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix10socketpair0g(
  asm("socketpair");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::sprintf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7sprintf0g(
-		int8_t *arg0, // *mut i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *mut u8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> i32
  asm("sprintf");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::sscanf
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6sscanf0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> i32
  asm("__isoc99_sscanf");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::stat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix4stat0g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
 		) // -> i32
  asm("stat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::statvfs
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7statvfs0g(
-		int8_t *arg0, // *const i8
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
+		uint8_t *arg0, // *const u8
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg1 // *mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
 		) // -> i32
  asm("statvfs");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strcasecmp
 extern int32_t  ZRG2cE14libc0_2_95_H194unix10strcasecmp0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("strcasecmp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strcasestr
-extern int8_t * ZRG2cE14libc0_2_95_H194unix10strcasestr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix10strcasestr0g(
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("strcasestr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strcat
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6strcat0g(
-		int8_t *arg0, // *mut i8
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6strcat0g(
+		uint8_t *arg0, // *mut u8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("strcat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strchr
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6strchr0g(
-		int8_t *arg0, // *const i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6strchr0g(
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
-		) // -> *mut i8
+		) // -> *mut u8
  asm("strchr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strcmp
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6strcmp0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("strcmp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strcoll
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7strcoll0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("strcoll");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strcpy
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6strcpy0g(
-		int8_t *arg0, // *mut i8
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6strcpy0g(
+		uint8_t *arg0, // *mut u8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("strcpy");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strcspn
 extern uintptr_t  ZRG2cE14libc0_2_95_H194unix7strcspn0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> usize
  asm("strcspn");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strdup
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6strdup0g(
-		int8_t *arg0 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6strdup0g(
+		uint8_t *arg0 // *const u8
+		) // -> *mut u8
  asm("strdup");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strerror
-extern int8_t * ZRG2cE14libc0_2_95_H194unix8strerror0g(
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix8strerror0g(
 		int32_t arg0 // i32
-		) // -> *mut i8
+		) // -> *mut u8
  asm("strerror");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strlen
 extern uintptr_t  ZRG2cE14libc0_2_95_H194unix6strlen0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> usize
  asm("strlen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strncasecmp
 extern int32_t  ZRG2cE14libc0_2_95_H194unix11strncasecmp0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2 // usize
 		) // -> i32
  asm("strncasecmp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strncat
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7strncat0g(
-		int8_t *arg0, // *mut i8
-		int8_t *arg1, // *const i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7strncat0g(
+		uint8_t *arg0, // *mut u8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2 // usize
-		) // -> *mut i8
+		) // -> *mut u8
  asm("strncat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strncmp
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7strncmp0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2 // usize
 		) // -> i32
  asm("strncmp");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strncpy
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7strncpy0g(
-		int8_t *arg0, // *mut i8
-		int8_t *arg1, // *const i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7strncpy0g(
+		uint8_t *arg0, // *mut u8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2 // usize
-		) // -> *mut i8
+		) // -> *mut u8
  asm("strncpy");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strndup
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7strndup0g(
-		int8_t *arg0, // *const i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7strndup0g(
+		uint8_t *arg0, // *const u8
 		uintptr_t arg1 // usize
-		) // -> *mut i8
+		) // -> *mut u8
  asm("strndup");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strnlen
 extern uintptr_t  ZRG2cE14libc0_2_95_H194unix7strnlen0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		uintptr_t arg1 // usize
 		) // -> usize
  asm("strnlen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strpbrk
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7strpbrk0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7strpbrk0g(
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("strpbrk");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strrchr
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7strrchr0g(
-		int8_t *arg0, // *const i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7strrchr0g(
+		uint8_t *arg0, // *const u8
 		int32_t arg1 // i32
-		) // -> *mut i8
+		) // -> *mut u8
  asm("strrchr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strsignal
-extern int8_t * ZRG2cE14libc0_2_95_H194unix9strsignal0g(
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix9strsignal0g(
 		int32_t arg0 // i32
-		) // -> *mut i8
+		) // -> *mut u8
  asm("strsignal");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strspn
 extern uintptr_t  ZRG2cE14libc0_2_95_H194unix6strspn0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> usize
  asm("strspn");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strstr
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6strstr0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6strstr0g(
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("strstr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strtod
 extern double  ZRG2cE14libc0_2_95_H194unix6strtod0g(
-		int8_t *arg0, // *const i8
-		int8_t **arg1 // *mut *mut i8
+		uint8_t *arg0, // *const u8
+		uint8_t **arg1 // *mut *mut u8
 		) // -> f64
  asm("strtod");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strtok
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6strtok0g(
-		int8_t *arg0, // *mut i8
-		int8_t *arg1 // *const i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6strtok0g(
+		uint8_t *arg0, // *mut u8
+		uint8_t *arg1 // *const u8
+		) // -> *mut u8
  asm("strtok");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strtol
 extern int64_t  ZRG2cE14libc0_2_95_H194unix6strtol0g(
-		int8_t *arg0, // *const i8
-		int8_t **arg1, // *mut *mut i8
+		uint8_t *arg0, // *const u8
+		uint8_t **arg1, // *mut *mut u8
 		int32_t arg2 // i32
 		) // -> i64
  asm("strtol");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strtoul
 extern uint64_t  ZRG2cE14libc0_2_95_H194unix7strtoul0g(
-		int8_t *arg0, // *const i8
-		int8_t **arg1, // *mut *mut i8
+		uint8_t *arg0, // *const u8
+		uint8_t **arg1, // *mut *mut u8
 		int32_t arg2 // i32
 		) // -> u64
  asm("strtoul");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::strxfrm
 extern uintptr_t  ZRG2cE14libc0_2_95_H194unix7strxfrm0g(
-		int8_t *arg0, // *mut i8
-		int8_t *arg1, // *const i8
+		uint8_t *arg0, // *mut u8
+		uint8_t *arg1, // *const u8
 		uintptr_t arg2 // usize
 		) // -> usize
  asm("strxfrm");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::symlink
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7symlink0g(
-		int8_t *arg0, // *const i8
-		int8_t *arg1 // *const i8
+		uint8_t *arg0, // *const u8
+		uint8_t *arg1 // *const u8
 		) // -> i32
  asm("symlink");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::symlinkat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix9symlinkat0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int32_t arg1, // i32
-		int8_t *arg2 // *const i8
+		uint8_t *arg2 // *const u8
 		) // -> i32
  asm("symlinkat");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::sysconf
@@ -8854,13 +8597,13 @@ extern int64_t  ZRG2cE14libc0_2_95_H194unix7sysconf0g(
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::syslog
 extern void  ZRG2cE14libc0_2_95_H194unix6syslog0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		...
 		) // -> ()
  asm("syslog");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::system
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6system0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("system");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::tcdrain
@@ -8934,9 +8677,9 @@ extern int64_t  ZRG2cE14libc0_2_95_H194unix5times0g(
 extern struct e_ZRG2cE14libc0_2_95_H194unix4FILE0g * ZRG2cE14libc0_2_95_H194unix7tmpfile0g(void) // -> *mut ::"libc-0_2_95_H19"::unix::FILE/*E*/
  asm("tmpfile");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::tmpnam
-extern int8_t * ZRG2cE14libc0_2_95_H194unix6tmpnam0g(
-		int8_t *arg0 // *mut i8
-		) // -> *mut i8
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix6tmpnam0g(
+		uint8_t *arg0 // *mut u8
+		) // -> *mut u8
  asm("tmpnam");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::tolower
 extern int32_t  ZRG2cE14libc0_2_95_H194unix7tolower0g(
@@ -8950,19 +8693,19 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7toupper0g(
  asm("toupper");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::truncate
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8truncate0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		int64_t arg1 // i64
 		) // -> i32
  asm("truncate");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::ttyname
-extern int8_t * ZRG2cE14libc0_2_95_H194unix7ttyname0g(
+extern uint8_t * ZRG2cE14libc0_2_95_H194unix7ttyname0g(
 		int32_t arg0 // i32
-		) // -> *mut i8
+		) // -> *mut u8
  asm("ttyname");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::ttyname_r
 extern int32_t  ZRG2cE14libc0_2_95_H194unix9ttyname_r0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *mut i8
+		uint8_t *arg1, // *mut u8
 		uintptr_t arg2 // usize
 		) // -> i32
  asm("ttyname_r");
@@ -8979,13 +8722,13 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6ungetc0g(
  asm("ungetc");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::unlink
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6unlink0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("unlink");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::unlinkat
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8unlinkat0g(
 		int32_t arg0, // i32
-		int8_t *arg1, // *const i8
+		uint8_t *arg1, // *const u8
 		int32_t arg2 // i32
 		) // -> i32
  asm("unlinkat");
@@ -8996,7 +8739,7 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix8unlockpt0g(
  asm("unlockpt");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::unsetenv
 extern int32_t  ZRG2cE14libc0_2_95_H194unix8unsetenv0g(
-		int8_t *arg0 // *const i8
+		uint8_t *arg0 // *const u8
 		) // -> i32
  asm("unsetenv");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::usleep
@@ -9006,13 +8749,13 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix6usleep0g(
  asm("usleep");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::utime
 extern int32_t  ZRG2cE14libc0_2_95_H194unix5utime0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct s_ZRG2cE14libc0_2_95_H194unix7utimbuf0g *arg1 // *const ::"libc-0_2_95_H19"::unix::utimbuf/*S*/
 		) // -> i32
  asm("utime");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::utimes
 extern int32_t  ZRG2cE14libc0_2_95_H194unix6utimes0g(
-		int8_t *arg0, // *const i8
+		uint8_t *arg0, // *const u8
 		struct s_ZRG2cE14libc0_2_95_H194unix7timeval0g *arg1 // *const ::"libc-0_2_95_H19"::unix::timeval/*S*/
 		) // -> i32
  asm("utimes");
@@ -9030,22 +8773,22 @@ extern int32_t  ZRG2cE14libc0_2_95_H194unix7waitpid0g(
  asm("waitpid");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::wcslen
 extern uintptr_t  ZRG2cE14libc0_2_95_H194unix6wcslen0g(
-		int32_t *arg0 // *const i32
+		uint32_t *arg0 // *const u32
 		) // -> usize
  asm("wcslen");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::wcstombs
 extern uintptr_t  ZRG2cE14libc0_2_95_H194unix8wcstombs0g(
-		int8_t *arg0, // *mut i8
-		int32_t *arg1, // *const i32
+		uint8_t *arg0, // *mut u8
+		uint32_t *arg1, // *const u32
 		uintptr_t arg2 // usize
 		) // -> usize
  asm("wcstombs");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::wmemchr
-extern int32_t * ZRG2cE14libc0_2_95_H194unix7wmemchr0g(
-		int32_t *arg0, // *const i32
-		int32_t arg1, // i32
+extern uint32_t * ZRG2cE14libc0_2_95_H194unix7wmemchr0g(
+		uint32_t *arg0, // *const u32
+		uint32_t arg1, // u32
 		uintptr_t arg2 // usize
-		) // -> *mut i32
+		) // -> *mut u32
  asm("wmemchr");
 // EXTERN extern "C" ::"libc-0_2_95_H19"::unix::write
 extern intptr_t  ZRG2cE14libc0_2_95_H194unix5write0g(
@@ -10235,121 +9978,121 @@ static uint64_t * ZRIG3cE9core0_0_05slice4iter7IterMut1gCg14post_inc_start0g(
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_addr
-struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g7si_addr0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_addr
+struct e_ZRG2cE9core0_0_03ffi6c_void0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g7si_addr0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> *mut ::"core-0_0_0"::ffi::c_void/*E*/
 
 {
 	struct e_ZRG2cE9core0_0_03ffi6c_void0g *rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnuB_016siginfo_sigfault0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::#0::siginfo_sigfault/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnuB_016siginfo_sigfault0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::#0::siginfo_sigfault/*S*/)
 	rv = var1->_3;	// retval = Use(_1*.3)
 	return rv;
 	// ^ Return
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_pid
-int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g6si_pid0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_pid
+int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g6si_pid0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i32
 
 {
 	int32_t rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/)
 	rv = var1->_1.var_1._0;	// retval = Use(_1*.1#1.0)
 	return rv;
 	// ^ Return
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_status
-int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g9si_status0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_status
+int32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g9si_status0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i32
 
 {
 	int32_t rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/)
 	rv = var1->_1.var_1._2;	// retval = Use(_1*.1#1.2)
 	return rv;
 	// ^ Return
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_stime
-int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8si_stime0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_stime
+int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8si_stime0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i64
 
 {
 	int64_t rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/)
 	rv = var1->_1.var_1._4;	// retval = Use(_1*.1#1.4)
 	return rv;
 	// ^ Return
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_uid
-uint32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g6si_uid0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_uid
+uint32_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g6si_uid0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> u32
 
 {
 	uint32_t rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/)
 	rv = var1->_1.var_1._1;	// retval = Use(_1*.1#1.1)
 	return rv;
 	// ^ Return
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_utime
-int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8si_utime0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_utime
+int64_t  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8si_utime0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> i64
 
 {
 	int64_t rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/)
 	rv = var1->_1.var_1._3;	// retval = Use(_1*.1#1.3)
 	return rv;
 	// ^ Return
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::si_value
-struct s_ZRG2cE14libc0_2_95_H194unix6sigval0g  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8si_value0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::si_value
+struct s_ZRG2cE14libc0_2_95_H194unix6sigval0g  ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8si_value0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> ::"libc-0_2_95_H19"::unix::sigval/*S*/
 
 {
 	struct s_ZRG2cE14libc0_2_95_H194unix6sigval0g rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnuB_113siginfo_timer0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::#1::siginfo_timer/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnuB_113siginfo_timer0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::#1::siginfo_timer/*S*/)
 	rv = var1->_5;	// retval = Use(_1*.5)
 	return rv;
 	// ^ Return
 }
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ /*- */>::sifields
-union u_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8sifields0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g8sifields0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ /*- */>::sifields
+union u_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8sifields0g * ZRIG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g8sifields0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 		) // -> &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::sifields/*U*/
 
 {
 	union u_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu8sifields0g *rv;
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *var0;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
 	struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *var1;	// *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/
-	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/)
+	var0 = (struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *)arg0;	// _0 = Cast(a0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/)
 	var1 = (struct s_ZRG5cE14libc0_2_95_H194unix10linux_like5linux3gnu9siginfo_f0g *)var0;	// _1 = Cast(_0 as *const ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::siginfo_f/*S*/)
 	rv = & var1->_1;	// retval = Borrow(Shared, _1*.1)
 	return rv;
@@ -12308,6 +12051,481 @@ static void  ZRQG6cE14libc0_2_95_H194unix10linux_like5linux3gnu5align5sem_t0g2cE
 	return ;
 	// ^ Return
 }
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g2cE9core0_0_05clone5Clone0g_K0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+
+{
+	struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align11max_align_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::max_align_t/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g2cE9core0_0_05clone5Clone0g_K0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+
+{
+	struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10mcontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::mcontext_t/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g2cE9core0_0_05clone5Clone0g_K0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+
+{
+	struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645align10ucontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::align::ucontext_t/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch645flock0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647flock640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::flock64/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ip_mreqn0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ip_mreqn/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648ipc_perm0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::ipc_perm/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch6414pthread_attr_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::pthread_attr_t/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648shmid_ds0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::shmid_ds/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649sigaction0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::sigaction/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649siginfo_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::siginfo_t/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647stack_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stack_t/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch644stat0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646stat640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::stat64/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch646statfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648statfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statfs64/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch647statvfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch649statvfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::statvfs64/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
+struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g2cE9core0_0_05clone5Clone0g_J0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+
+{
+	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g rv;
+	rv = (*arg0);	// retval = Use(a0*)
+	return rv;
+	// ^ Return
+}
+// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
+static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g2cE9core0_0_05clone5Clone0g10clone_from0g(
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647aarch648termios20g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::aarch64::termios2/*S*/
+		) // -> ()
+
+{
+	tUNIT rv;
+	(*arg0) = (*arg1);	// a0* = Use(a1*)
+	/* ZST assign */
+	// ^ drop(a0)
+	return ;
+	// ^ Return
+}
 // <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::msqid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
 struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g  ZRQG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g2cE9core0_0_05clone5Clone0g_I0g(
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b648msqid_ds0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::msqid_ds/*S*/
@@ -12373,631 +12591,6 @@ struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g  ZRQG6c
 static void  ZRQG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g2cE9core0_0_05clone5Clone0g10clone_from0g(
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sysinfo/*S*/
 		struct s_ZRG6cE14libc0_2_95_H194unix10linux_like5linux3gnu3b647sysinfo0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::sysinfo/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6413_libc_fpstate0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpstate/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_fpxreg0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_fpxreg/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6412_libc_xmmreg0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::_libc_xmmreg/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g2cE9core0_0_05clone5Clone0g_K0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-
-{
-	struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645align11max_align_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::align::max_align_t/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_645flock0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647flock640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::flock64/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ip_mreqn0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ip_mreqn/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648ipc_perm0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ipc_perm/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410mcontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::mcontext_t/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g2cE9core0_0_05clone5Clone0g_K0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-
-{
-	struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-		struct s_ZRG8cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647not_x327statvfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::not_x32::statvfs/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6414pthread_attr_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648shmid_ds0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::shmid_ds/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649sigaction0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::sigaction/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649siginfo_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::siginfo_t/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_647stack_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stack_t/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644stat0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646stat640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::stat64/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_646statfs0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648statfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statfs64/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_649statvfs640g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::statvfs64/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_648termios20g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::termios2/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6410ucontext_t0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::ucontext_t/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_644user0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6418user_fpregs_struct0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_fpregs_struct/*S*/
-		) // -> ()
-
-{
-	tUNIT rv;
-	(*arg0) = (*arg1);	// a0* = Use(a1*)
-	/* ZST assign */
-	// ^ drop(a0)
-	return ;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone<'#omitted,>
-struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g2cE9core0_0_05clone5Clone0g_J0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g *arg0 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-		) // -> ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-
-{
-	struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g rv;
-	rv = (*arg0);	// retval = Use(a0*)
-	return rv;
-	// ^ Return
-}
-// <::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/ as ::"core-0_0_0"::clone::Clone>::clone_from<'#omitted,'#omitted,>
-static void  ZRQG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g2cE9core0_0_05clone5Clone0g10clone_from0g(
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g *arg0, // &'#omitted mut ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
-		struct s_ZRG7cE14libc0_2_95_H194unix10linux_like5linux3gnu3b646x86_6416user_regs_struct0g *arg1 // &'#omitted ::"libc-0_2_95_H19"::unix::linux_like::linux::gnu::b64::x86_64::user_regs_struct/*S*/
 		) // -> ()
 
 {

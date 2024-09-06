@@ -8,6 +8,7 @@ IFS=$(printf "\n\t")
 # trap atexit EXIT
 
 cd "$(dirname "$0")"
+mkdir -p output
 LIBRARY_PATH=project_hw/lib MRUSTC_TARGET_VER=1.54 mrustc -L project_hw/rust --out-dir output src/main.rs || true
 mv output/main.c project_hw/algorithm/solve.c
 touch project_hw/algorithm/algorithm.c

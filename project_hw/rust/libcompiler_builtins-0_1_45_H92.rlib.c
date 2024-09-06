@@ -35,62 +35,19 @@ static inline uint8_t __mrustc_atomicloop8(volatile uint8_t* slot, uint8_t param
 static inline uint16_t __mrustc_atomicloop16(volatile uint16_t* slot, uint16_t param, int ordering, uint16_t (*cb)(uint16_t, uint16_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint16_t v = atomic_load_explicit((_Atomic uint16_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint16_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint32_t __mrustc_atomicloop32(volatile uint32_t* slot, uint32_t param, int ordering, uint32_t (*cb)(uint32_t, uint32_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint32_t v = atomic_load_explicit((_Atomic uint32_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint32_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint64_t __mrustc_atomicloop64(volatile uint64_t* slot, uint64_t param, int ordering, uint64_t (*cb)(uint64_t, uint64_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint64_t v = atomic_load_explicit((_Atomic uint64_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
-typedef struct { uint64_t lo, hi; } uint128_t;
-typedef struct { uint64_t lo, hi; } int128_t;
-static inline uint128_t intrinsic_ctlz_u128(uint128_t v);
-static inline uint128_t shl128(uint128_t a, uint32_t b);
-static inline uint128_t shr128(uint128_t a, uint32_t b);
-static inline float make_float(int is_neg, int exp, uint32_t mantissa_bits) { float rv; uint32_t vi=(mantissa_bits&((1<<23)-1))|((exp+127)<<23);if(is_neg)vi|=1<<31; memcpy(&rv, &vi, 4); return rv; }
-static inline double make_double(int is_neg, int exp, uint32_t mantissa_bits) { double rv; uint64_t vi=(mantissa_bits&((1ull<<52)-1))|((uint64_t)(exp+1023)<<52);if(is_neg)vi|=1ull<<63; memcpy(&rv, &vi, 4); return rv; }
-static inline uint128_t make128_raw(uint64_t hi, uint64_t lo) { uint128_t rv = { lo, hi }; return rv; }
-static inline uint128_t make128(uint64_t v) { uint128_t rv = { v, 0 }; return rv; }
-static inline float cast128_float(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(23+1))-64)); uint64_t b = shr128(y, (64-(23+1))).lo | (y.lo & 0xFFFFFFFFFF); uint64_t m = a + ((b - ((b >> 63) & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+127-1; uint32_t vi = (e << 23) + m; float rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline double cast128_double(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(52+1))-64)); uint64_t b = shr128(y, (64-(52+1))).lo | (y.lo & 0x7FF); uint64_t m = a + ((b - (b >> 63 & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+1023-1; uint64_t vi = (e << 52) + m; double rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline int cmp128(uint128_t a, uint128_t b) { if(a.hi != b.hi) return a.hi < b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo + b.lo; o->hi = a.hi + b.hi + (o->lo < a.lo ? 1 : 0); return (o->hi < a.hi); }
-static inline bool sub128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo - b.lo; o->hi = a.hi - b.hi - (a.lo < b.lo ? 1 : 0); return (o->hi > a.hi); }
-static inline bool mul128_o(uint128_t a, uint128_t b, uint128_t* o) { bool of = false; o->hi = 0; o->lo = 0; for(int i=0;i<128;i++){ uint64_t m = (1ull << (i % 64)); if(a.hi==0&&a.lo<m)   break; if(i>=64&&a.hi<m) break; if( m & (i >= 64 ? a.hi : a.lo) ) of |= add128_o(*o, b, o); b.hi = (b.hi << 1) | (b.lo >> 63); b.lo = (b.lo << 1); } return of;}
-static inline bool div128_o(uint128_t a, uint128_t b, uint128_t* q, uint128_t* r) { if(a.hi == 0 && b.hi == 0) { if(q) { q->hi=0; q->lo = a.lo / b.lo; } if(r) { r->hi=0; r->lo = a.lo % b.lo; } return false; } if(cmp128(a, b) < 0) { if(q) { q->hi=0; q->lo=0; } if(r) *r = a; return false; } uint128_t a_div_2 = {(a.lo>>1)|(a.hi << 63), a.hi>>1}; int shift = 0; while( cmp128(a_div_2, b) >= 0 && shift < 128 ) { shift += 1; b.hi = (b.hi<<1)|(b.lo>>63); b.lo <<= 1; } if(shift == 128) return true; uint128_t mask = { /*lo=*/(shift >= 64 ? 0 : (1ull << shift)), /*hi=*/(shift < 64 ? 0 : 1ull << (shift-64)) }; shift ++; if(q) { q->hi = 0; q->lo = 0; } while(shift--) { if( cmp128(a, b) >= 0 ) { if(q) add128_o(*q, mask, q); sub128_o(a, b, &a); } mask.lo = (mask.lo >> 1) | (mask.hi << 63); mask.hi >>= 1; b.lo = (b.lo >> 1) | (b.hi << 63); b.hi >>= 1; } if(r) *r = a; return false;}
-static inline uint128_t add128(uint128_t a, uint128_t b) { uint128_t v; add128_o(a, b, &v); return v; }
-static inline uint128_t sub128(uint128_t a, uint128_t b) { uint128_t v; sub128_o(a, b, &v); return v; }
-static inline uint128_t mul128(uint128_t a, uint128_t b) { uint128_t v; mul128_o(a, b, &v); return v; }
-static inline uint128_t div128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, &v, NULL); return v; }
-static inline uint128_t mod128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, NULL, &v); return v;}
-static inline uint128_t and128(uint128_t a, uint128_t b) { uint128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline uint128_t or128 (uint128_t a, uint128_t b) { uint128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline uint128_t xor128(uint128_t a, uint128_t b) { uint128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline uint128_t shl128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline uint128_t shr128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = a.hi >> b; } else { v.lo = a.hi >> (b - 64); v.hi = 0; } return v; }
-static inline uint128_t popcount128(uint128_t a) { uint128_t v = { __builtin_popcountll(a.lo) + __builtin_popcountll(a.hi), 0 }; return v; }
-static inline uint128_t __builtin_bswap128(uint128_t v) { uint128_t rv = { __builtin_bswap64(v.hi), __builtin_bswap64(v.lo) }; return rv; }
+typedef unsigned __int128 uint128_t;
+typedef signed __int128 int128_t;
+static inline uint128_t __builtin_bswap128(uint128_t v) {
+	uint64_t lo = __builtin_bswap64((uint64_t)v);
+	uint64_t hi = __builtin_bswap64((uint64_t)(v>>64));
+	return ((uint128_t)lo << 64) | (uint128_t)hi;
+}
 static inline uint128_t intrinsic_ctlz_u128(uint128_t v) {
-	uint128_t rv = { (v.hi != 0 ? __builtin_clz64(v.hi) : (v.lo != 0 ? 64 + __builtin_clz64(v.lo) : 128)), 0 };
-	return rv;
+	return (v == 0 ? 128 : (v >> 64 != 0 ? __builtin_clz64(v>>64) : 64 + __builtin_clz64(v)));
 }
 static inline uint128_t intrinsic_cttz_u128(uint128_t v) {
-	uint128_t rv = { (v.lo == 0 ? (v.hi == 0 ? 128 : __builtin_ctz64(v.hi) + 64) : __builtin_ctz64(v.lo)), 0 };
-	return rv;
+	return (v == 0 ? 128 : ((v&0xFFFFFFFFFFFFFFFF) == 0 ? __builtin_ctz64(v>>64) + 64 : __builtin_ctz64(v)));
 }
-static inline int128_t make128s_raw(uint64_t hi, uint64_t lo) { int128_t rv = { lo, hi }; return rv; }
-static inline int128_t make128s(int64_t v) { int128_t rv = { v, (v < 0 ? -1 : 0) }; return rv; }
-static inline int128_t neg128s(int128_t v) { int128_t rv = { ~v.lo+1, ~v.hi + (v.lo == 0) }; return rv; }
-static inline float cast128s_float(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_float(make128_raw(v.hi,v.lo)); }
-static inline double cast128s_double(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_double(make128_raw(v.hi,v.lo)); }
-static inline int cmp128s(int128_t a, int128_t b) { if(a.hi != b.hi) return (int64_t)a.hi < (int64_t)b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; add128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna==sgnb && sgno != sgna); }
-static inline bool sub128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; sub128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna!=sgnb && sgno != sgna); }
-static inline bool mul128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna = (a.hi >> 63); bool sgnb = (b.hi >> 63); if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = mul128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); if(sgna != sgnb) *o = neg128s(*o); return rv; }
-static inline bool div128s_o(int128_t a, int128_t b, int128_t* q, int128_t* r) { bool sgna = (a.hi >> 63) != 0; bool sgnb = (b.hi >> 63) != 0; if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = div128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)q, (uint128_t*)r); if(sgna != sgnb && q) *q = neg128s(*q); if(sgna && r) *r = neg128s(*r); return rv; }
-static inline int128_t add128s(int128_t a, int128_t b) { int128_t v; add128s_o(a, b, &v); return v; }
-static inline int128_t sub128s(int128_t a, int128_t b) { int128_t v; sub128s_o(a, b, &v); return v; }
-static inline int128_t mul128s(int128_t a, int128_t b) { int128_t v; mul128s_o(a, b, &v); return v; }
-static inline int128_t div128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, &v, NULL); return v; }
-static inline int128_t mod128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, NULL, &v); return v; }
-static inline int128_t and128s(int128_t a, int128_t b) { int128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline int128_t or128s (int128_t a, int128_t b) { int128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline int128_t xor128s(int128_t a, int128_t b) { int128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline int128_t shl128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline int128_t shr128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = (int64_t)a.hi >> b; } else { v.lo = (int64_t)a.hi >> (b - 64); v.hi = (int64_t)a.hi < 0 ? -1 : 0; } return v; }
 
 static inline int slice_cmp(SLICE_PTR l, SLICE_PTR r) {
 	int rv = memcmp(l.PTR, r.PTR, l.META < r.META ? l.META : r.META);
@@ -118,7 +75,7 @@ static inline uint8_t __mrustc_bitrev8(uint8_t v) { if(v==0||v==0xFF) return v; 
 static inline uint16_t __mrustc_bitrev16(uint16_t v) { if(v==0) return 0; return ((uint16_t)__mrustc_bitrev8(v>>8))|((uint16_t)__mrustc_bitrev8(v)<<8); }
 static inline uint32_t __mrustc_bitrev32(uint32_t v) { if(v==0) return 0; return ((uint32_t)__mrustc_bitrev16(v>>16))|((uint32_t)__mrustc_bitrev16(v)<<16); }
 static inline uint64_t __mrustc_bitrev64(uint64_t v) { if(v==0) return 0; return ((uint64_t)__mrustc_bitrev32(v>>32))|((uint64_t)__mrustc_bitrev32(v)<<32); }
-static inline uint128_t __mrustc_bitrev128(uint128_t v) { uint128_t rv = { __mrustc_bitrev64(v.hi), __mrustc_bitrev64(v.lo) }; return rv; }
+static inline uint128_t __mrustc_bitrev128(uint128_t v) { if(v==0) return 0; uint128_t rv = ((uint128_t)__mrustc_bitrev64(v>>64))|((uint128_t)__mrustc_bitrev64(v)<<64); return rv; }
 static inline uint8_t __mrustc_op_umax8(uint8_t a, uint8_t b) { return (a > b ? a : b); }
 static inline uint8_t __mrustc_op_umin8(uint8_t a, uint8_t b) { return (a < b ? a : b); }
 static inline uint8_t __mrustc_op_imax8(uint8_t a, uint8_t b) { return ((int8_t)a > (int8_t)b ? a : b); }
@@ -142,15 +99,15 @@ static inline uint64_t __mrustc_op_and_not64(uint64_t a, uint64_t b) { return ~(
  // (u128, bool, )
 typedef struct TUP_2_ZRTCi_ZRTCw  {
 	/*@0*/RUST_BOOL _1; // bool
-	/*@8*/uint128_t _0; // u128
+	/*@16*/uint128_t _0; // u128
 } TUP_2_ZRTCi_ZRTCw ;
-typedef char sizeof_assert_TUP_2_ZRTCi_ZRTCw [ (sizeof(TUP_2_ZRTCi_ZRTCw ) == 24) ? 1 : -1 ];
+typedef char sizeof_assert_TUP_2_ZRTCi_ZRTCw [ (sizeof(TUP_2_ZRTCi_ZRTCw ) == 32) ? 1 : -1 ];
  // (i128, bool, )
 typedef struct TUP_2_ZRTCj_ZRTCw  {
 	/*@0*/RUST_BOOL _1; // bool
-	/*@8*/int128_t _0; // i128
+	/*@16*/int128_t _0; // i128
 } TUP_2_ZRTCj_ZRTCw ;
-typedef char sizeof_assert_TUP_2_ZRTCj_ZRTCw [ (sizeof(TUP_2_ZRTCj_ZRTCw ) == 24) ? 1 : -1 ];
+typedef char sizeof_assert_TUP_2_ZRTCj_ZRTCw [ (sizeof(TUP_2_ZRTCj_ZRTCw ) == 32) ? 1 : -1 ];
  // (u64, u64, )
 typedef struct TUP_2_ZRTCg_ZRTCg  {
 	/*@0*/uint64_t _0; // u64
@@ -946,6 +903,16 @@ float  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gCgCn(
 // PROTO extern "Rust" ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<u64,f64,>
 double  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gCgCo(
 		uint64_t arg0 // u64
+		) // -> f64
+;
+// PROTO extern "Rust" ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f32,>
+float  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCn(
+		int64_t arg0 // i64
+		) // -> f32
+;
+// PROTO extern "Rust" ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f64,>
+double  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCo(
+		int64_t arg0 // i64
 		) // -> f64
 ;
 // PROTO extern "Rust" ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<u128,f32,>
@@ -6953,9 +6920,11 @@ double  ZRG3cR27compiler_builtins0_1_45_H925float4conv11__floatdidf0g(
 
 {
 	double rv;
-	rv = (double )arg0;	// retval = Cast(a0 as f64)
+	rv = ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCo( arg0 );
+	// ^ Call( retval = ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f64,>( a0, ), bb1, bb2)
 	return rv;
 	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
 }
 // ::"compiler_builtins-0_1_45_H92"::float::conv::__floatdidf::__floatdidf
 double  ZRG4cR27compiler_builtins0_1_45_H925float4conv11__floatdidf_D0g(
@@ -6964,9 +6933,11 @@ double  ZRG4cR27compiler_builtins0_1_45_H925float4conv11__floatdidf_D0g(
 
 {
 	double rv;
-	rv = (double )arg0;	// retval = Cast(a0 as f64)
+	rv = ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCo( arg0 );
+	// ^ Call( retval = ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f64,>( a0, ), bb1, bb2)
 	return rv;
 	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
 }
 // ::"compiler_builtins-0_1_45_H92"::float::conv::__floatdisf
 float  ZRG3cR27compiler_builtins0_1_45_H925float4conv11__floatdisf0g(
@@ -6975,9 +6946,11 @@ float  ZRG3cR27compiler_builtins0_1_45_H925float4conv11__floatdisf0g(
 
 {
 	float rv;
-	rv = (float )arg0;	// retval = Cast(a0 as f32)
+	rv = ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCn( arg0 );
+	// ^ Call( retval = ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f32,>( a0, ), bb1, bb2)
 	return rv;
 	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
 }
 // ::"compiler_builtins-0_1_45_H92"::float::conv::__floatdisf::__floatdisf
 float  ZRG4cR27compiler_builtins0_1_45_H925float4conv11__floatdisf_D0g(
@@ -6986,9 +6959,11 @@ float  ZRG4cR27compiler_builtins0_1_45_H925float4conv11__floatdisf_D0g(
 
 {
 	float rv;
-	rv = (float )arg0;	// retval = Cast(a0 as f32)
+	rv = ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCn( arg0 );
+	// ^ Call( retval = ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f32,>( a0, ), bb1, bb2)
 	return rv;
 	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
 }
 // ::"compiler_builtins-0_1_45_H92"::float::conv::__floatsidf
 double  ZRG3cR27compiler_builtins0_1_45_H925float4conv11__floatsidf0g(
@@ -7760,10 +7735,10 @@ bb8:
 	// ^ Call( _12 = "transmute"::<f32,u32,>( a0, ), bb9, bb3)
 	var11 = var12 & 0x7fffff;	// _11 = BinOp(_12 BIT_AND 0x7fffff u32)
 	var13 = var11 | 0x800000;	// _13 = BinOp(_11 BIT_OR 0x800000 u32)
-	var15.lo = var13; var15.hi = var13 < 0 ? -1 : 0;	// _15 = Cast(_13 as u128)
+	var15 = (uint128_t )var13;	// _15 = Cast(_13 as u128)
 	var14 = var2 - var1;	// _14 = BinOp(_2 SUB _1)
 	var16 = (uint32_t )var14;	// _16 = Cast(_14 as u32)
-	var3 = shr128(var15, var16);	// _3 = BinOp(_15 BIT_SHR _16)
+	var3 = var15 >> var16;	// _3 = BinOp(_15 BIT_SHR _16)
 	goto bb12;
 	// ^ Goto(12)
 bb10:
@@ -7771,18 +7746,18 @@ bb10:
 	// ^ Call( _18 = "transmute"::<f32,u32,>( a0, ), bb11, bb3)
 	var17 = var18 & 0x7fffff;	// _17 = BinOp(_18 BIT_AND 0x7fffff u32)
 	var19 = var17 | 0x800000;	// _19 = BinOp(_17 BIT_OR 0x800000 u32)
-	var21.lo = var19; var21.hi = var19 < 0 ? -1 : 0;	// _21 = Cast(_19 as u128)
+	var21 = (uint128_t )var19;	// _21 = Cast(_19 as u128)
 	var20 = var1 - var2;	// _20 = BinOp(_1 SUB _2)
 	var22 = (uint32_t )var20;	// _22 = Cast(_20 as u32)
-	var3 = shl128(var21, var22);	// _3 = BinOp(_21 BIT_SHL _22)
+	var3 = var21 << var22;	// _3 = BinOp(_21 BIT_SHL _22)
 	// ^ Goto(12)
 bb12:
 	var4 = var0;	// _4 = Use(_0)
 	if(var0) goto bb13; else goto bb15;
 	// ^ If( _0 : 13, 15)
 bb13:
-	var23.lo = ~var3.lo; var23.hi = ~var3.hi;	// _23 = UniOp(_3 INV)
-	add128_o(var23, make128_raw(0ull, 1ull), &rv);
+	var23 = ~var3;	// _23 = UniOp(_3 INV)
+	__builtin_add_overflow(var23, (uint128_t)0x1ull, &rv);
 	// ^ Call( retval = "wrapping_add"::<u128,>( _23, 0x1 u128, ), bb14, bb3)
 	return rv;
 	// ^ Return
@@ -7791,11 +7766,11 @@ bb15:
 	return rv;
 	// ^ Return
 bb16:
-	rv = make128_raw(0ull, 0ull);	// retval = Constant(0x0 u128)
+	rv = (uint128_t)0x0ull;	// retval = Constant(0x0 u128)
 	return rv;
 	// ^ Return
 bb17:
-	rv = make128_raw(18446744073709551615ull, 18446744073709551615ull);	// retval = Constant(0xffffffffffffffffffffffffffffffff u128)
+	rv = ( ((uint128_t)0xffffffffffffffffull << 64) | (uint128_t)0xffffffffffffffffull);	// retval = Constant(0xffffffffffffffffffffffffffffffff u128)
 	return rv;
 	// ^ Return
 }
@@ -7844,7 +7819,7 @@ int128_t  ZRG3cR27compiler_builtins0_1_45_H925float4conv12float_to_int2gCnCj(
 	// ^ If( _4 : 4, 5)
 bb3: _Unwind_Resume(); // Diverge
 bb4:
-	rv = make128s_raw(0ull, 0ull);	// retval = Constant(+0 i128)
+	rv = (int128_t)0ll;	// retval = Constant(+0 i128)
 	return rv;
 	// ^ Return
 bb5:
@@ -7871,10 +7846,10 @@ bb8:
 	// ^ Call( _12 = "transmute"::<f32,u32,>( a0, ), bb9, bb3)
 	var11 = var12 & 0x7fffff;	// _11 = BinOp(_12 BIT_AND 0x7fffff u32)
 	var13 = var11 | 0x800000;	// _13 = BinOp(_11 BIT_OR 0x800000 u32)
-	var15.lo = var13; var15.hi = var13 < 0 ? -1 : 0;	// _15 = Cast(_13 as i128)
+	var15 = (int128_t )var13;	// _15 = Cast(_13 as i128)
 	var14 = var2 - var1;	// _14 = BinOp(_2 SUB _1)
 	var16 = (uint32_t )var14;	// _16 = Cast(_14 as u32)
-	var3 = shr128s(var15, var16);	// _3 = BinOp(_15 BIT_SHR _16)
+	var3 = var15 >> var16;	// _3 = BinOp(_15 BIT_SHR _16)
 	goto bb12;
 	// ^ Goto(12)
 bb10:
@@ -7882,10 +7857,10 @@ bb10:
 	// ^ Call( _18 = "transmute"::<f32,u32,>( a0, ), bb11, bb3)
 	var17 = var18 & 0x7fffff;	// _17 = BinOp(_18 BIT_AND 0x7fffff u32)
 	var19 = var17 | 0x800000;	// _19 = BinOp(_17 BIT_OR 0x800000 u32)
-	var21.lo = var19; var21.hi = var19 < 0 ? -1 : 0;	// _21 = Cast(_19 as i128)
+	var21 = (int128_t )var19;	// _21 = Cast(_19 as i128)
 	var20 = var1 - var2;	// _20 = BinOp(_1 SUB _2)
 	var22 = (uint32_t )var20;	// _22 = Cast(_20 as u32)
-	var3 = shl128s(var21, var22);	// _3 = BinOp(_21 BIT_SHL _22)
+	var3 = var21 << var22;	// _3 = BinOp(_21 BIT_SHL _22)
 	// ^ Goto(12)
 bb12:
 	var4 = var0;	// _4 = Use(_0)
@@ -7902,11 +7877,11 @@ bb15:
 	return rv;
 	// ^ Return
 bb16:
-	rv = make128s_raw(9223372036854775808ull, 0ull);	// retval = Constant(--170141183460469231731687303715884105728 i128)
+	rv = (int128_t)( ((uint128_t)9223372036854775808ull << 64) | (uint128_t)0ull);	// retval = Constant(--170141183460469231731687303715884105728 i128)
 	return rv;
 	// ^ Return
 bb17:
-	rv = make128s_raw(9223372036854775807ull, 18446744073709551615ull);	// retval = Constant(+170141183460469231731687303715884105727 i128)
+	rv = (int128_t)( ((uint128_t)9223372036854775807ull << 64) | (uint128_t)18446744073709551615ull);	// retval = Constant(+170141183460469231731687303715884105727 i128)
 	return rv;
 	// ^ Return
 }
@@ -8416,10 +8391,10 @@ bb8:
 	// ^ Call( _12 = "transmute"::<f64,u64,>( a0, ), bb9, bb3)
 	var11 = var12 & 0xfffffffffffffull;	// _11 = BinOp(_12 BIT_AND 0xfffffffffffff u64)
 	var13 = var11 | 0x10000000000000ull;	// _13 = BinOp(_11 BIT_OR 0x10000000000000 u64)
-	var15.lo = var13; var15.hi = var13 < 0 ? -1 : 0;	// _15 = Cast(_13 as u128)
+	var15 = (uint128_t )var13;	// _15 = Cast(_13 as u128)
 	var14 = var2 - var1;	// _14 = BinOp(_2 SUB _1)
 	var16 = (uint32_t )var14;	// _16 = Cast(_14 as u32)
-	var3 = shr128(var15, var16);	// _3 = BinOp(_15 BIT_SHR _16)
+	var3 = var15 >> var16;	// _3 = BinOp(_15 BIT_SHR _16)
 	goto bb12;
 	// ^ Goto(12)
 bb10:
@@ -8427,18 +8402,18 @@ bb10:
 	// ^ Call( _18 = "transmute"::<f64,u64,>( a0, ), bb11, bb3)
 	var17 = var18 & 0xfffffffffffffull;	// _17 = BinOp(_18 BIT_AND 0xfffffffffffff u64)
 	var19 = var17 | 0x10000000000000ull;	// _19 = BinOp(_17 BIT_OR 0x10000000000000 u64)
-	var21.lo = var19; var21.hi = var19 < 0 ? -1 : 0;	// _21 = Cast(_19 as u128)
+	var21 = (uint128_t )var19;	// _21 = Cast(_19 as u128)
 	var20 = var1 - var2;	// _20 = BinOp(_1 SUB _2)
 	var22 = (uint32_t )var20;	// _22 = Cast(_20 as u32)
-	var3 = shl128(var21, var22);	// _3 = BinOp(_21 BIT_SHL _22)
+	var3 = var21 << var22;	// _3 = BinOp(_21 BIT_SHL _22)
 	// ^ Goto(12)
 bb12:
 	var4 = var0;	// _4 = Use(_0)
 	if(var0) goto bb13; else goto bb15;
 	// ^ If( _0 : 13, 15)
 bb13:
-	var23.lo = ~var3.lo; var23.hi = ~var3.hi;	// _23 = UniOp(_3 INV)
-	add128_o(var23, make128_raw(0ull, 1ull), &rv);
+	var23 = ~var3;	// _23 = UniOp(_3 INV)
+	__builtin_add_overflow(var23, (uint128_t)0x1ull, &rv);
 	// ^ Call( retval = "wrapping_add"::<u128,>( _23, 0x1 u128, ), bb14, bb3)
 	return rv;
 	// ^ Return
@@ -8447,11 +8422,11 @@ bb15:
 	return rv;
 	// ^ Return
 bb16:
-	rv = make128_raw(0ull, 0ull);	// retval = Constant(0x0 u128)
+	rv = (uint128_t)0x0ull;	// retval = Constant(0x0 u128)
 	return rv;
 	// ^ Return
 bb17:
-	rv = make128_raw(18446744073709551615ull, 18446744073709551615ull);	// retval = Constant(0xffffffffffffffffffffffffffffffff u128)
+	rv = ( ((uint128_t)0xffffffffffffffffull << 64) | (uint128_t)0xffffffffffffffffull);	// retval = Constant(0xffffffffffffffffffffffffffffffff u128)
 	return rv;
 	// ^ Return
 }
@@ -8500,7 +8475,7 @@ int128_t  ZRG3cR27compiler_builtins0_1_45_H925float4conv12float_to_int2gCoCj(
 	// ^ If( _4 : 4, 5)
 bb3: _Unwind_Resume(); // Diverge
 bb4:
-	rv = make128s_raw(0ull, 0ull);	// retval = Constant(+0 i128)
+	rv = (int128_t)0ll;	// retval = Constant(+0 i128)
 	return rv;
 	// ^ Return
 bb5:
@@ -8527,10 +8502,10 @@ bb8:
 	// ^ Call( _12 = "transmute"::<f64,u64,>( a0, ), bb9, bb3)
 	var11 = var12 & 0xfffffffffffffull;	// _11 = BinOp(_12 BIT_AND 0xfffffffffffff u64)
 	var13 = var11 | 0x10000000000000ull;	// _13 = BinOp(_11 BIT_OR 0x10000000000000 u64)
-	var15.lo = var13; var15.hi = var13 < 0 ? -1 : 0;	// _15 = Cast(_13 as i128)
+	var15 = (int128_t )var13;	// _15 = Cast(_13 as i128)
 	var14 = var2 - var1;	// _14 = BinOp(_2 SUB _1)
 	var16 = (uint32_t )var14;	// _16 = Cast(_14 as u32)
-	var3 = shr128s(var15, var16);	// _3 = BinOp(_15 BIT_SHR _16)
+	var3 = var15 >> var16;	// _3 = BinOp(_15 BIT_SHR _16)
 	goto bb12;
 	// ^ Goto(12)
 bb10:
@@ -8538,10 +8513,10 @@ bb10:
 	// ^ Call( _18 = "transmute"::<f64,u64,>( a0, ), bb11, bb3)
 	var17 = var18 & 0xfffffffffffffull;	// _17 = BinOp(_18 BIT_AND 0xfffffffffffff u64)
 	var19 = var17 | 0x10000000000000ull;	// _19 = BinOp(_17 BIT_OR 0x10000000000000 u64)
-	var21.lo = var19; var21.hi = var19 < 0 ? -1 : 0;	// _21 = Cast(_19 as i128)
+	var21 = (int128_t )var19;	// _21 = Cast(_19 as i128)
 	var20 = var1 - var2;	// _20 = BinOp(_1 SUB _2)
 	var22 = (uint32_t )var20;	// _22 = Cast(_20 as u32)
-	var3 = shl128s(var21, var22);	// _3 = BinOp(_21 BIT_SHL _22)
+	var3 = var21 << var22;	// _3 = BinOp(_21 BIT_SHL _22)
 	// ^ Goto(12)
 bb12:
 	var4 = var0;	// _4 = Use(_0)
@@ -8558,11 +8533,11 @@ bb15:
 	return rv;
 	// ^ Return
 bb16:
-	rv = make128s_raw(9223372036854775808ull, 0ull);	// retval = Constant(--170141183460469231731687303715884105728 i128)
+	rv = (int128_t)( ((uint128_t)9223372036854775808ull << 64) | (uint128_t)0ull);	// retval = Constant(--170141183460469231731687303715884105728 i128)
 	return rv;
 	// ^ Return
 bb17:
-	rv = make128s_raw(9223372036854775807ull, 18446744073709551615ull);	// retval = Constant(+170141183460469231731687303715884105727 i128)
+	rv = (int128_t)( ((uint128_t)9223372036854775807ull << 64) | (uint128_t)18446744073709551615ull);	// retval = Constant(+170141183460469231731687303715884105727 i128)
 	return rv;
 	// ^ Return
 }
@@ -9272,6 +9247,306 @@ bb15:
 	goto bb8;
 	// ^ Goto(8)
 }
+// ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f32,>
+float  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCn(
+		int64_t arg0 // i64
+		) // -> f32
+
+{
+	float rv;
+	uint64_t var0;	// u64
+	RUST_BOOL var1;	// bool
+	uint64_t var2;	// u64
+	uint32_t var3;	// u32
+	uint32_t var4;	// u32
+	uint32_t var5;	// u32
+	uint32_t var6;	// u32
+	RUST_BOOL var7;	// bool
+	uint32_t var8;	// u32
+	uint32_t var9;	// u32
+	uint32_t var10;	// u32
+	uint64_t var11;	// u64
+	uint64_t *var12;	// &'#omitted mut u64
+	uint64_t var13;	// u64
+	uint64_t *var14;	// &'#omitted mut u64
+	uint64_t *var15;	// &'#omitted mut u64
+	uint64_t var16;	// u64
+	uint64_t *var17;	// &'#omitted mut u64
+	uint64_t var18;	// u64
+	uint32_t var19;	// u32
+	uint64_t var20;	// u64
+	uint64_t var21;	// u64
+	uint32_t var22;	// u32
+	uint32_t var23;	// u32
+	uint32_t var24;	// u32
+	uint32_t var25;	// u32
+	uint32_t var26;	// u32
+	uint32_t var27;	// u32
+	uint32_t var28;	// u32
+	uint32_t var29;	// u32
+	uint32_t var30;	// u32
+	uint32_t var31;	// u32
+	uint64_t var32;	// u64
+	uint32_t var33;	// u32
+	uint32_t var34;	// u32
+	uint64_t var35;	// u64
+	uint64_t var36;	// u64
+	uint32_t var37;	// u32
+	RUST_BOOL var38;	// bool
+	uint64_t var39;	// u64
+	uint64_t var40;	// u64
+	RUST_BOOL var41;	// bool
+	uint64_t var42;	// u64
+	uint64_t var43;	// u64
+	var7 = arg0 == 0ll;	// _7 = BinOp(a0 EQ +0 i64)
+	if(var7) goto bb1; else goto bb2;
+	// ^ If( _7 : 1, 2)
+bb1:
+	rv = 0.0000000000e+00f;	// retval = Constant(0x0p+0 f32)
+	return rv;
+	// ^ Return
+bb2:
+	var0 = 0x4ull;	// _0 = Constant(0x4 u64)
+	var1 = arg0 < 0ll;	// _1 = BinOp(a0 LT +0 i64)
+	var2 = ZRQCh2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, 0ll );
+	// ^ Call( _2 = <i64 as ::"compiler_builtins-0_1_45_H92"::int::Int>::abs_diff( a0, +0 i64, ), bb3, bb5)
+	var18 = (var2 != 0 ? __builtin_clz64(var2) : sizeof(uint64_t )*8);
+	// ^ Call( _18 = "ctlz"::<u64,>( _2, ), bb4, bb5)
+	var8 = (uint32_t )var18;	// _8 = Cast(_18 as u32)
+	var3 = 0x40 - var8;	// _3 = BinOp(0x40 u32 SUB _8)
+	var4 = 0x18;	// _4 = Constant(0x18 u32)
+	var5 = var3 - 0x1;	// _5 = BinOp(_3 SUB 0x1 u32)
+	var7 = false;	// _7 = Constant(false)
+	var7 = var3 > 0x18;	// _7 = BinOp(_3 GT 0x18 u32)
+	if(var7) goto bb6; else goto bb7;
+	// ^ If( _7 : 6, 7)
+bb5: _Unwind_Resume(); // Diverge
+bb6:
+	var6 = var4 + 0x2;	// _6 = BinOp(_4 ADD 0x2 u32)
+	var9 = var4 + 0x1;	// _9 = BinOp(_4 ADD 0x1 u32)
+	var7 = var3 == var9;	// _7 = BinOp(_3 EQ _9)
+	if(var7) goto bb10; else goto bb11;
+	// ^ If( _7 : 10, 11)
+bb7:
+	var22 = var4 - var3;	// _22 = BinOp(_4 SUB _3)
+	var21 = var2;	// _21 = Use(_2)
+	var19 = var22 & 0x3f;	// _19 = BinOp(_22 BIT_AND 0x3f u32)
+	var20 = (uint64_t )var19;	// _20 = Cast(_19 as u64)
+	var2 = var21 << var20;
+	// ^ Call( _2 = "unchecked_shl"::<u64,>( _21, _20, ), bb8, bb5)
+bb8:
+	var30 = var5 + 0x7f;	// _30 = BinOp(_5 ADD 0x7f u32)
+	var31 = (uint32_t )var2;	// _31 = Cast(_2 as u32)
+	var25 = (uint32_t )var1;	// _25 = Cast(_1 as u32)
+	var24 = var25 << 0x1f;	// _24 = BinOp(_25 BIT_SHL 0x1f u32)
+	var27 = var30 << 0x17;	// _27 = BinOp(_30 BIT_SHL 0x17 u32)
+	var26 = var27 & 0x7f800000;	// _26 = BinOp(_27 BIT_AND 0x7f800000 u32)
+	var23 = var24 | var26;	// _23 = BinOp(_24 BIT_OR _26)
+	var28 = var31 & 0x7fffff;	// _28 = BinOp(_31 BIT_AND 0x7fffff u32)
+	var29 = var23 | var28;	// _29 = BinOp(_23 BIT_OR _28)
+	memcpy( &rv, &var29, sizeof(uint32_t ));
+	// ^ Call( retval = "transmute"::<u32,f32,>( _29, ), bb9, bb5)
+	return rv;
+	// ^ Return
+bb10:
+	var32 = var2;	// _32 = Use(_2)
+	var2 = var32 << 0x1;	// _2 = BinOp(_32 BIT_SHL 0x1 u32)
+	goto bb14;
+	// ^ Goto(14)
+bb11:
+	var7 = var3 == var6;	// _7 = BinOp(_3 EQ _6)
+	if(var7) goto bb14; else goto bb12;
+	// ^ If( _7 : 14, 12)
+bb12:
+	var33 = var3 - var6;	// _33 = BinOp(_3 SUB _6)
+	var39 = var2 >> var33;	// _39 = BinOp(_2 BIT_SHR _33)
+	var36 = var2 & 0xffffffffffffffffull;	// _36 = BinOp(_2 BIT_AND 0xffffffffffffffff u64)
+	var10 = 0x40 + var6;	// _10 = BinOp(0x40 u32 ADD _6)
+	var37 = var10 - var3;	// _37 = BinOp(_10 SUB _3)
+	var34 = var37 & 0x3f;	// _34 = BinOp(_37 BIT_AND 0x3f u32)
+	var35 = (uint64_t )var34;	// _35 = Cast(_34 as u64)
+	var11 = var36 << var35;
+	// ^ Call( _11 = "unchecked_shl"::<u64,>( _36, _35, ), bb13, bb5)
+	var38 = var11 != 0x0ull;	// _38 = BinOp(_11 NE 0x0 u64)
+	var40 = (uint64_t )var38;	// _40 = Cast(_38 as u64)
+	var2 = var39 | var40;	// _2 = BinOp(_39 BIT_OR _40)
+	// ^ Goto(14)
+bb14:
+	var12 = & var2;	// _12 = Borrow(Unique, _2)
+	var13 = var2 & var0;	// _13 = BinOp(_2 BIT_AND _0)
+	var41 = var13 != 0x0ull;	// _41 = BinOp(_13 NE 0x0 u64)
+	var42 = (uint64_t )var41;	// _42 = Cast(_41 as u64)
+	(*var12) = (*var12) | var42;	// _12* = BinOp(_12* BIT_OR _42)
+	// ^ drop(_12)
+	var14 = & var2;	// _14 = Borrow(Unique, _2)
+	(*var14) = (*var14) + 0x1ull;	// _14* = BinOp(_14* ADD 0x1 u64)
+	// ^ drop(_14)
+	var15 = & var2;	// _15 = Borrow(Unique, _2)
+	(*var15) = (*var15) >> 0x2;	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
+	// ^ drop(_15)
+	var43 = 0x1ull << var4;	// _43 = BinOp(0x1 u64 BIT_SHL _4)
+	var16 = var2 & var43;	// _16 = BinOp(_2 BIT_AND _43)
+	var7 = var16 != 0x0ull;	// _7 = BinOp(_16 NE 0x0 u64)
+	if(var7) goto bb15; else goto bb8;
+	// ^ If( _7 : 15, 8)
+bb15:
+	var17 = & var2;	// _17 = Borrow(Unique, _2)
+	(*var17) = (*var17) >> 0x1;	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
+	// ^ drop(_17)
+	var5 = var5 + 0x1;	// _5 = BinOp(_5 ADD 0x1 u32)
+	goto bb8;
+	// ^ Goto(8)
+}
+// ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<i64,f64,>
+double  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gChCo(
+		int64_t arg0 // i64
+		) // -> f64
+
+{
+	double rv;
+	uint64_t var0;	// u64
+	RUST_BOOL var1;	// bool
+	uint64_t var2;	// u64
+	uint32_t var3;	// u32
+	uint32_t var4;	// u32
+	uint32_t var5;	// u32
+	uint32_t var6;	// u32
+	RUST_BOOL var7;	// bool
+	uint32_t var8;	// u32
+	uint32_t var9;	// u32
+	uint32_t var10;	// u32
+	uint64_t var11;	// u64
+	uint64_t *var12;	// &'#omitted mut u64
+	uint64_t var13;	// u64
+	uint64_t *var14;	// &'#omitted mut u64
+	uint64_t *var15;	// &'#omitted mut u64
+	uint64_t var16;	// u64
+	uint64_t *var17;	// &'#omitted mut u64
+	uint64_t var18;	// u64
+	uint32_t var19;	// u32
+	uint64_t var20;	// u64
+	uint64_t var21;	// u64
+	uint32_t var22;	// u32
+	uint32_t var23;	// u32
+	uint64_t var24;	// u64
+	uint64_t var25;	// u64
+	uint64_t var26;	// u64
+	uint64_t var27;	// u64
+	uint64_t var28;	// u64
+	uint64_t var29;	// u64
+	uint64_t var30;	// u64
+	uint64_t var31;	// u64
+	uint64_t var32;	// u64
+	uint32_t var33;	// u32
+	uint32_t var34;	// u32
+	uint64_t var35;	// u64
+	uint64_t var36;	// u64
+	uint32_t var37;	// u32
+	RUST_BOOL var38;	// bool
+	uint64_t var39;	// u64
+	uint64_t var40;	// u64
+	RUST_BOOL var41;	// bool
+	uint64_t var42;	// u64
+	uint64_t var43;	// u64
+	var7 = arg0 == 0ll;	// _7 = BinOp(a0 EQ +0 i64)
+	if(var7) goto bb1; else goto bb2;
+	// ^ If( _7 : 1, 2)
+bb1:
+	rv = 0.000000000000000000e+00;	// retval = Constant(0x0p+0 f64)
+	return rv;
+	// ^ Return
+bb2:
+	var0 = 0x4ull;	// _0 = Constant(0x4 u64)
+	var1 = arg0 < 0ll;	// _1 = BinOp(a0 LT +0 i64)
+	var2 = ZRQCh2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, 0ll );
+	// ^ Call( _2 = <i64 as ::"compiler_builtins-0_1_45_H92"::int::Int>::abs_diff( a0, +0 i64, ), bb3, bb5)
+	var18 = (var2 != 0 ? __builtin_clz64(var2) : sizeof(uint64_t )*8);
+	// ^ Call( _18 = "ctlz"::<u64,>( _2, ), bb4, bb5)
+	var8 = (uint32_t )var18;	// _8 = Cast(_18 as u32)
+	var3 = 0x40 - var8;	// _3 = BinOp(0x40 u32 SUB _8)
+	var4 = 0x35;	// _4 = Constant(0x35 u32)
+	var5 = var3 - 0x1;	// _5 = BinOp(_3 SUB 0x1 u32)
+	var7 = false;	// _7 = Constant(false)
+	var7 = var3 > 0x35;	// _7 = BinOp(_3 GT 0x35 u32)
+	if(var7) goto bb6; else goto bb7;
+	// ^ If( _7 : 6, 7)
+bb5: _Unwind_Resume(); // Diverge
+bb6:
+	var6 = var4 + 0x2;	// _6 = BinOp(_4 ADD 0x2 u32)
+	var9 = var4 + 0x1;	// _9 = BinOp(_4 ADD 0x1 u32)
+	var7 = var3 == var9;	// _7 = BinOp(_3 EQ _9)
+	if(var7) goto bb10; else goto bb11;
+	// ^ If( _7 : 10, 11)
+bb7:
+	var22 = var4 - var3;	// _22 = BinOp(_4 SUB _3)
+	var21 = var2;	// _21 = Use(_2)
+	var19 = var22 & 0x3f;	// _19 = BinOp(_22 BIT_AND 0x3f u32)
+	var20 = (uint64_t )var19;	// _20 = Cast(_19 as u64)
+	var2 = var21 << var20;
+	// ^ Call( _2 = "unchecked_shl"::<u64,>( _21, _20, ), bb8, bb5)
+bb8:
+	var23 = var5 + 0x3ff;	// _23 = BinOp(_5 ADD 0x3ff u32)
+	var31 = (uint64_t )var23;	// _31 = Cast(_23 as u64)
+	var26 = (uint64_t )var1;	// _26 = Cast(_1 as u64)
+	var25 = var26 << 0x3f;	// _25 = BinOp(_26 BIT_SHL 0x3f u32)
+	var28 = var31 << 0x34;	// _28 = BinOp(_31 BIT_SHL 0x34 u32)
+	var27 = var28 & 0x7ff0000000000000ull;	// _27 = BinOp(_28 BIT_AND 0x7ff0000000000000 u64)
+	var24 = var25 | var27;	// _24 = BinOp(_25 BIT_OR _27)
+	var29 = var2 & 0xfffffffffffffull;	// _29 = BinOp(_2 BIT_AND 0xfffffffffffff u64)
+	var30 = var24 | var29;	// _30 = BinOp(_24 BIT_OR _29)
+	memcpy( &rv, &var30, sizeof(uint64_t ));
+	// ^ Call( retval = "transmute"::<u64,f64,>( _30, ), bb9, bb5)
+	return rv;
+	// ^ Return
+bb10:
+	var32 = var2;	// _32 = Use(_2)
+	var2 = var32 << 0x1;	// _2 = BinOp(_32 BIT_SHL 0x1 u32)
+	goto bb14;
+	// ^ Goto(14)
+bb11:
+	var7 = var3 == var6;	// _7 = BinOp(_3 EQ _6)
+	if(var7) goto bb14; else goto bb12;
+	// ^ If( _7 : 14, 12)
+bb12:
+	var33 = var3 - var6;	// _33 = BinOp(_3 SUB _6)
+	var39 = var2 >> var33;	// _39 = BinOp(_2 BIT_SHR _33)
+	var36 = var2 & 0xffffffffffffffffull;	// _36 = BinOp(_2 BIT_AND 0xffffffffffffffff u64)
+	var10 = 0x40 + var6;	// _10 = BinOp(0x40 u32 ADD _6)
+	var37 = var10 - var3;	// _37 = BinOp(_10 SUB _3)
+	var34 = var37 & 0x3f;	// _34 = BinOp(_37 BIT_AND 0x3f u32)
+	var35 = (uint64_t )var34;	// _35 = Cast(_34 as u64)
+	var11 = var36 << var35;
+	// ^ Call( _11 = "unchecked_shl"::<u64,>( _36, _35, ), bb13, bb5)
+	var38 = var11 != 0x0ull;	// _38 = BinOp(_11 NE 0x0 u64)
+	var40 = (uint64_t )var38;	// _40 = Cast(_38 as u64)
+	var2 = var39 | var40;	// _2 = BinOp(_39 BIT_OR _40)
+	// ^ Goto(14)
+bb14:
+	var12 = & var2;	// _12 = Borrow(Unique, _2)
+	var13 = var2 & var0;	// _13 = BinOp(_2 BIT_AND _0)
+	var41 = var13 != 0x0ull;	// _41 = BinOp(_13 NE 0x0 u64)
+	var42 = (uint64_t )var41;	// _42 = Cast(_41 as u64)
+	(*var12) = (*var12) | var42;	// _12* = BinOp(_12* BIT_OR _42)
+	// ^ drop(_12)
+	var14 = & var2;	// _14 = Borrow(Unique, _2)
+	(*var14) = (*var14) + 0x1ull;	// _14* = BinOp(_14* ADD 0x1 u64)
+	// ^ drop(_14)
+	var15 = & var2;	// _15 = Borrow(Unique, _2)
+	(*var15) = (*var15) >> 0x2;	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
+	// ^ drop(_15)
+	var43 = 0x1ull << var4;	// _43 = BinOp(0x1 u64 BIT_SHL _4)
+	var16 = var2 & var43;	// _16 = BinOp(_2 BIT_AND _43)
+	var7 = var16 != 0x0ull;	// _7 = BinOp(_16 NE 0x0 u64)
+	if(var7) goto bb15; else goto bb8;
+	// ^ If( _7 : 15, 8)
+bb15:
+	var17 = & var2;	// _17 = Borrow(Unique, _2)
+	(*var17) = (*var17) >> 0x1;	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
+	// ^ drop(_17)
+	var5 = var5 + 0x1;	// _5 = BinOp(_5 ADD 0x1 u32)
+	goto bb8;
+	// ^ Goto(8)
+}
 // ::"compiler_builtins-0_1_45_H92"::float::conv::int_to_float<u128,f32,>
 float  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gCiCn(
 		uint128_t arg0 // u128
@@ -9323,7 +9598,7 @@ float  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gCiCn(
 	RUST_BOOL var41;	// bool
 	uint128_t var42;	// u128
 	uint128_t var43;	// u128
-	var7 = 0 == cmp128(make128_raw(0ull, 0ull), arg0);	// _7 = BinOp(a0 EQ 0x0 u128)
+	var7 = arg0 == (uint128_t)0x0ull;	// _7 = BinOp(a0 EQ 0x0 u128)
 	if(var7) goto bb1; else goto bb2;
 	// ^ If( _7 : 1, 2)
 bb1:
@@ -9331,12 +9606,12 @@ bb1:
 	return rv;
 	// ^ Return
 bb2:
-	var0 = make128_raw(0ull, 4ull);	// _0 = Constant(0x4 u128)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), arg0);	// _1 = BinOp(a0 LT 0x0 u128)
-	var2 = ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, make128_raw(0ull, 0ull) );
+	var0 = (uint128_t)0x4ull;	// _0 = Constant(0x4 u128)
+	var1 = arg0 < (uint128_t)0x0ull;	// _1 = BinOp(a0 LT 0x0 u128)
+	var2 = ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, (uint128_t)0x0ull );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::Int>::abs_diff( a0, 0x0 u128, ), bb3, bb5)
 	var18 = (intrinsic_ctlz_u128(var2));	// ^ Call( _18 = "ctlz"::<u128,>( _2, ), bb4, bb5)
-	var8 = var18.lo;	// _8 = Cast(_18 as u32)
+	var8 = (uint32_t )var18;	// _8 = Cast(_18 as u32)
 	var3 = 0x80 - var8;	// _3 = BinOp(0x80 u32 SUB _8)
 	var4 = 0x18;	// _4 = Constant(0x18 u32)
 	var5 = var3 - 0x1;	// _5 = BinOp(_3 SUB 0x1 u32)
@@ -9355,12 +9630,12 @@ bb7:
 	var22 = var4 - var3;	// _22 = BinOp(_4 SUB _3)
 	var21 = var2;	// _21 = Use(_2)
 	var19 = var22 & 0x7f;	// _19 = BinOp(_22 BIT_AND 0x7f u32)
-	var20.lo = var19; var20.hi = var19 < 0 ? -1 : 0;	// _20 = Cast(_19 as u128)
-	var2 = shl128(var21, var20.lo);
+	var20 = (uint128_t )var19;	// _20 = Cast(_19 as u128)
+	var2 = var21 << var20;
 	// ^ Call( _2 = "unchecked_shl"::<u128,>( _21, _20, ), bb8, bb5)
 bb8:
 	var30 = var5 + 0x7f;	// _30 = BinOp(_5 ADD 0x7f u32)
-	var31 = var2.lo;	// _31 = Cast(_2 as u32)
+	var31 = (uint32_t )var2;	// _31 = Cast(_2 as u32)
 	var25 = (uint32_t )var1;	// _25 = Cast(_1 as u32)
 	var24 = var25 << 0x1f;	// _24 = BinOp(_25 BIT_SHL 0x1f u32)
 	var27 = var30 << 0x17;	// _27 = BinOp(_30 BIT_SHL 0x17 u32)
@@ -9374,7 +9649,7 @@ bb8:
 	// ^ Return
 bb10:
 	var32 = var2;	// _32 = Use(_2)
-	var2 = shl128(var32, 0x1);	// _2 = BinOp(_32 BIT_SHL 0x1 u32)
+	var2 = var32 << 0x1;	// _2 = BinOp(_32 BIT_SHL 0x1 u32)
 	goto bb14;
 	// ^ Goto(14)
 bb11:
@@ -9383,39 +9658,39 @@ bb11:
 	// ^ If( _7 : 14, 12)
 bb12:
 	var33 = var3 - var6;	// _33 = BinOp(_3 SUB _6)
-	var39 = shr128(var2, var33);	// _39 = BinOp(_2 BIT_SHR _33)
-	var36 = and128(var2, make128_raw(18446744073709551615ull, 18446744073709551615ull));	// _36 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
+	var39 = var2 >> var33;	// _39 = BinOp(_2 BIT_SHR _33)
+	var36 = var2 & ( ((uint128_t)0xffffffffffffffffull << 64) | (uint128_t)0xffffffffffffffffull);	// _36 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
 	var10 = 0x80 + var6;	// _10 = BinOp(0x80 u32 ADD _6)
 	var37 = var10 - var3;	// _37 = BinOp(_10 SUB _3)
 	var34 = var37 & 0x7f;	// _34 = BinOp(_37 BIT_AND 0x7f u32)
-	var35.lo = var34; var35.hi = var34 < 0 ? -1 : 0;	// _35 = Cast(_34 as u128)
-	var11 = shl128(var36, var35.lo);
+	var35 = (uint128_t )var34;	// _35 = Cast(_34 as u128)
+	var11 = var36 << var35;
 	// ^ Call( _11 = "unchecked_shl"::<u128,>( _36, _35, ), bb13, bb5)
-	var38 = 0 != cmp128(make128_raw(0ull, 0ull), var11);	// _38 = BinOp(_11 NE 0x0 u128)
-	var40.lo = var38; var40.hi = var38 < 0 ? -1 : 0;	// _40 = Cast(_38 as u128)
-	var2 = or128(var39, var40);	// _2 = BinOp(_39 BIT_OR _40)
+	var38 = var11 != (uint128_t)0x0ull;	// _38 = BinOp(_11 NE 0x0 u128)
+	var40 = (uint128_t )var38;	// _40 = Cast(_38 as u128)
+	var2 = var39 | var40;	// _2 = BinOp(_39 BIT_OR _40)
 	// ^ Goto(14)
 bb14:
 	var12 = & var2;	// _12 = Borrow(Unique, _2)
-	var13 = and128(var2, var0);	// _13 = BinOp(_2 BIT_AND _0)
-	var41 = 0 != cmp128(make128_raw(0ull, 0ull), var13);	// _41 = BinOp(_13 NE 0x0 u128)
-	var42.lo = var41; var42.hi = var41 < 0 ? -1 : 0;	// _42 = Cast(_41 as u128)
-	(*var12) = or128((*var12), var42);	// _12* = BinOp(_12* BIT_OR _42)
+	var13 = var2 & var0;	// _13 = BinOp(_2 BIT_AND _0)
+	var41 = var13 != (uint128_t)0x0ull;	// _41 = BinOp(_13 NE 0x0 u128)
+	var42 = (uint128_t )var41;	// _42 = Cast(_41 as u128)
+	(*var12) = (*var12) | var42;	// _12* = BinOp(_12* BIT_OR _42)
 	// ^ drop(_12)
 	var14 = & var2;	// _14 = Borrow(Unique, _2)
-	(*var14) = add128((*var14), make128_raw(0ull, 1ull));	// _14* = BinOp(_14* ADD 0x1 u128)
+	(*var14) = (*var14) + (uint128_t)0x1ull;	// _14* = BinOp(_14* ADD 0x1 u128)
 	// ^ drop(_14)
 	var15 = & var2;	// _15 = Borrow(Unique, _2)
-	(*var15) = shr128((*var15), 0x2);	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
+	(*var15) = (*var15) >> 0x2;	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
 	// ^ drop(_15)
-	var43 = shl128(make128_raw(0ull, 1ull), var4);	// _43 = BinOp(0x1 u128 BIT_SHL _4)
-	var16 = and128(var2, var43);	// _16 = BinOp(_2 BIT_AND _43)
-	var7 = 0 != cmp128(make128_raw(0ull, 0ull), var16);	// _7 = BinOp(_16 NE 0x0 u128)
+	var43 = (uint128_t)0x1ull << var4;	// _43 = BinOp(0x1 u128 BIT_SHL _4)
+	var16 = var2 & var43;	// _16 = BinOp(_2 BIT_AND _43)
+	var7 = var16 != (uint128_t)0x0ull;	// _7 = BinOp(_16 NE 0x0 u128)
 	if(var7) goto bb15; else goto bb8;
 	// ^ If( _7 : 15, 8)
 bb15:
 	var17 = & var2;	// _17 = Borrow(Unique, _2)
-	(*var17) = shr128((*var17), 0x1);	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
+	(*var17) = (*var17) >> 0x1;	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
 	// ^ drop(_17)
 	var5 = var5 + 0x1;	// _5 = BinOp(_5 ADD 0x1 u32)
 	goto bb8;
@@ -9473,7 +9748,7 @@ double  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gCiCo(
 	RUST_BOOL var42;	// bool
 	uint128_t var43;	// u128
 	uint128_t var44;	// u128
-	var7 = 0 == cmp128(make128_raw(0ull, 0ull), arg0);	// _7 = BinOp(a0 EQ 0x0 u128)
+	var7 = arg0 == (uint128_t)0x0ull;	// _7 = BinOp(a0 EQ 0x0 u128)
 	if(var7) goto bb1; else goto bb2;
 	// ^ If( _7 : 1, 2)
 bb1:
@@ -9481,12 +9756,12 @@ bb1:
 	return rv;
 	// ^ Return
 bb2:
-	var0 = make128_raw(0ull, 4ull);	// _0 = Constant(0x4 u128)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), arg0);	// _1 = BinOp(a0 LT 0x0 u128)
-	var2 = ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, make128_raw(0ull, 0ull) );
+	var0 = (uint128_t)0x4ull;	// _0 = Constant(0x4 u128)
+	var1 = arg0 < (uint128_t)0x0ull;	// _1 = BinOp(a0 LT 0x0 u128)
+	var2 = ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, (uint128_t)0x0ull );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::Int>::abs_diff( a0, 0x0 u128, ), bb3, bb5)
 	var18 = (intrinsic_ctlz_u128(var2));	// ^ Call( _18 = "ctlz"::<u128,>( _2, ), bb4, bb5)
-	var8 = var18.lo;	// _8 = Cast(_18 as u32)
+	var8 = (uint32_t )var18;	// _8 = Cast(_18 as u32)
 	var3 = 0x80 - var8;	// _3 = BinOp(0x80 u32 SUB _8)
 	var4 = 0x35;	// _4 = Constant(0x35 u32)
 	var5 = var3 - 0x1;	// _5 = BinOp(_3 SUB 0x1 u32)
@@ -9505,13 +9780,13 @@ bb7:
 	var22 = var4 - var3;	// _22 = BinOp(_4 SUB _3)
 	var21 = var2;	// _21 = Use(_2)
 	var19 = var22 & 0x7f;	// _19 = BinOp(_22 BIT_AND 0x7f u32)
-	var20.lo = var19; var20.hi = var19 < 0 ? -1 : 0;	// _20 = Cast(_19 as u128)
-	var2 = shl128(var21, var20.lo);
+	var20 = (uint128_t )var19;	// _20 = Cast(_19 as u128)
+	var2 = var21 << var20;
 	// ^ Call( _2 = "unchecked_shl"::<u128,>( _21, _20, ), bb8, bb5)
 bb8:
 	var23 = var5 + 0x3ff;	// _23 = BinOp(_5 ADD 0x3ff u32)
 	var31 = (uint64_t )var23;	// _31 = Cast(_23 as u64)
-	var32 = var2.lo;	// _32 = Cast(_2 as u64)
+	var32 = (uint64_t )var2;	// _32 = Cast(_2 as u64)
 	var26 = (uint64_t )var1;	// _26 = Cast(_1 as u64)
 	var25 = var26 << 0x3f;	// _25 = BinOp(_26 BIT_SHL 0x3f u32)
 	var28 = var31 << 0x34;	// _28 = BinOp(_31 BIT_SHL 0x34 u32)
@@ -9525,7 +9800,7 @@ bb8:
 	// ^ Return
 bb10:
 	var33 = var2;	// _33 = Use(_2)
-	var2 = shl128(var33, 0x1);	// _2 = BinOp(_33 BIT_SHL 0x1 u32)
+	var2 = var33 << 0x1;	// _2 = BinOp(_33 BIT_SHL 0x1 u32)
 	goto bb14;
 	// ^ Goto(14)
 bb11:
@@ -9534,39 +9809,39 @@ bb11:
 	// ^ If( _7 : 14, 12)
 bb12:
 	var34 = var3 - var6;	// _34 = BinOp(_3 SUB _6)
-	var40 = shr128(var2, var34);	// _40 = BinOp(_2 BIT_SHR _34)
-	var37 = and128(var2, make128_raw(18446744073709551615ull, 18446744073709551615ull));	// _37 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
+	var40 = var2 >> var34;	// _40 = BinOp(_2 BIT_SHR _34)
+	var37 = var2 & ( ((uint128_t)0xffffffffffffffffull << 64) | (uint128_t)0xffffffffffffffffull);	// _37 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
 	var10 = 0x80 + var6;	// _10 = BinOp(0x80 u32 ADD _6)
 	var38 = var10 - var3;	// _38 = BinOp(_10 SUB _3)
 	var35 = var38 & 0x7f;	// _35 = BinOp(_38 BIT_AND 0x7f u32)
-	var36.lo = var35; var36.hi = var35 < 0 ? -1 : 0;	// _36 = Cast(_35 as u128)
-	var11 = shl128(var37, var36.lo);
+	var36 = (uint128_t )var35;	// _36 = Cast(_35 as u128)
+	var11 = var37 << var36;
 	// ^ Call( _11 = "unchecked_shl"::<u128,>( _37, _36, ), bb13, bb5)
-	var39 = 0 != cmp128(make128_raw(0ull, 0ull), var11);	// _39 = BinOp(_11 NE 0x0 u128)
-	var41.lo = var39; var41.hi = var39 < 0 ? -1 : 0;	// _41 = Cast(_39 as u128)
-	var2 = or128(var40, var41);	// _2 = BinOp(_40 BIT_OR _41)
+	var39 = var11 != (uint128_t)0x0ull;	// _39 = BinOp(_11 NE 0x0 u128)
+	var41 = (uint128_t )var39;	// _41 = Cast(_39 as u128)
+	var2 = var40 | var41;	// _2 = BinOp(_40 BIT_OR _41)
 	// ^ Goto(14)
 bb14:
 	var12 = & var2;	// _12 = Borrow(Unique, _2)
-	var13 = and128(var2, var0);	// _13 = BinOp(_2 BIT_AND _0)
-	var42 = 0 != cmp128(make128_raw(0ull, 0ull), var13);	// _42 = BinOp(_13 NE 0x0 u128)
-	var43.lo = var42; var43.hi = var42 < 0 ? -1 : 0;	// _43 = Cast(_42 as u128)
-	(*var12) = or128((*var12), var43);	// _12* = BinOp(_12* BIT_OR _43)
+	var13 = var2 & var0;	// _13 = BinOp(_2 BIT_AND _0)
+	var42 = var13 != (uint128_t)0x0ull;	// _42 = BinOp(_13 NE 0x0 u128)
+	var43 = (uint128_t )var42;	// _43 = Cast(_42 as u128)
+	(*var12) = (*var12) | var43;	// _12* = BinOp(_12* BIT_OR _43)
 	// ^ drop(_12)
 	var14 = & var2;	// _14 = Borrow(Unique, _2)
-	(*var14) = add128((*var14), make128_raw(0ull, 1ull));	// _14* = BinOp(_14* ADD 0x1 u128)
+	(*var14) = (*var14) + (uint128_t)0x1ull;	// _14* = BinOp(_14* ADD 0x1 u128)
 	// ^ drop(_14)
 	var15 = & var2;	// _15 = Borrow(Unique, _2)
-	(*var15) = shr128((*var15), 0x2);	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
+	(*var15) = (*var15) >> 0x2;	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
 	// ^ drop(_15)
-	var44 = shl128(make128_raw(0ull, 1ull), var4);	// _44 = BinOp(0x1 u128 BIT_SHL _4)
-	var16 = and128(var2, var44);	// _16 = BinOp(_2 BIT_AND _44)
-	var7 = 0 != cmp128(make128_raw(0ull, 0ull), var16);	// _7 = BinOp(_16 NE 0x0 u128)
+	var44 = (uint128_t)0x1ull << var4;	// _44 = BinOp(0x1 u128 BIT_SHL _4)
+	var16 = var2 & var44;	// _16 = BinOp(_2 BIT_AND _44)
+	var7 = var16 != (uint128_t)0x0ull;	// _7 = BinOp(_16 NE 0x0 u128)
 	if(var7) goto bb15; else goto bb8;
 	// ^ If( _7 : 15, 8)
 bb15:
 	var17 = & var2;	// _17 = Borrow(Unique, _2)
-	(*var17) = shr128((*var17), 0x1);	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
+	(*var17) = (*var17) >> 0x1;	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
 	// ^ drop(_17)
 	var5 = var5 + 0x1;	// _5 = BinOp(_5 ADD 0x1 u32)
 	goto bb8;
@@ -9623,7 +9898,7 @@ float  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gCjCn(
 	RUST_BOOL var41;	// bool
 	uint128_t var42;	// u128
 	uint128_t var43;	// u128
-	var7 = 0 == cmp128s(make128s_raw(0ull, 0ull), arg0);	// _7 = BinOp(a0 EQ +0 i128)
+	var7 = arg0 == (int128_t)0ll;	// _7 = BinOp(a0 EQ +0 i128)
 	if(var7) goto bb1; else goto bb2;
 	// ^ If( _7 : 1, 2)
 bb1:
@@ -9631,12 +9906,12 @@ bb1:
 	return rv;
 	// ^ Return
 bb2:
-	var0 = make128_raw(0ull, 4ull);	// _0 = Constant(0x4 u128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg0);	// _1 = BinOp(a0 LT +0 i128)
-	var2 = ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, make128s_raw(0ull, 0ull) );
+	var0 = (uint128_t)0x4ull;	// _0 = Constant(0x4 u128)
+	var1 = arg0 < (int128_t)0ll;	// _1 = BinOp(a0 LT +0 i128)
+	var2 = ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, (int128_t)0ll );
 	// ^ Call( _2 = <i128 as ::"compiler_builtins-0_1_45_H92"::int::Int>::abs_diff( a0, +0 i128, ), bb3, bb5)
 	var18 = (intrinsic_ctlz_u128(var2));	// ^ Call( _18 = "ctlz"::<u128,>( _2, ), bb4, bb5)
-	var8 = var18.lo;	// _8 = Cast(_18 as u32)
+	var8 = (uint32_t )var18;	// _8 = Cast(_18 as u32)
 	var3 = 0x80 - var8;	// _3 = BinOp(0x80 u32 SUB _8)
 	var4 = 0x18;	// _4 = Constant(0x18 u32)
 	var5 = var3 - 0x1;	// _5 = BinOp(_3 SUB 0x1 u32)
@@ -9655,12 +9930,12 @@ bb7:
 	var22 = var4 - var3;	// _22 = BinOp(_4 SUB _3)
 	var21 = var2;	// _21 = Use(_2)
 	var19 = var22 & 0x7f;	// _19 = BinOp(_22 BIT_AND 0x7f u32)
-	var20.lo = var19; var20.hi = var19 < 0 ? -1 : 0;	// _20 = Cast(_19 as u128)
-	var2 = shl128(var21, var20.lo);
+	var20 = (uint128_t )var19;	// _20 = Cast(_19 as u128)
+	var2 = var21 << var20;
 	// ^ Call( _2 = "unchecked_shl"::<u128,>( _21, _20, ), bb8, bb5)
 bb8:
 	var30 = var5 + 0x7f;	// _30 = BinOp(_5 ADD 0x7f u32)
-	var31 = var2.lo;	// _31 = Cast(_2 as u32)
+	var31 = (uint32_t )var2;	// _31 = Cast(_2 as u32)
 	var25 = (uint32_t )var1;	// _25 = Cast(_1 as u32)
 	var24 = var25 << 0x1f;	// _24 = BinOp(_25 BIT_SHL 0x1f u32)
 	var27 = var30 << 0x17;	// _27 = BinOp(_30 BIT_SHL 0x17 u32)
@@ -9674,7 +9949,7 @@ bb8:
 	// ^ Return
 bb10:
 	var32 = var2;	// _32 = Use(_2)
-	var2 = shl128(var32, 0x1);	// _2 = BinOp(_32 BIT_SHL 0x1 u32)
+	var2 = var32 << 0x1;	// _2 = BinOp(_32 BIT_SHL 0x1 u32)
 	goto bb14;
 	// ^ Goto(14)
 bb11:
@@ -9683,39 +9958,39 @@ bb11:
 	// ^ If( _7 : 14, 12)
 bb12:
 	var33 = var3 - var6;	// _33 = BinOp(_3 SUB _6)
-	var39 = shr128(var2, var33);	// _39 = BinOp(_2 BIT_SHR _33)
-	var36 = and128(var2, make128_raw(18446744073709551615ull, 18446744073709551615ull));	// _36 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
+	var39 = var2 >> var33;	// _39 = BinOp(_2 BIT_SHR _33)
+	var36 = var2 & ( ((uint128_t)0xffffffffffffffffull << 64) | (uint128_t)0xffffffffffffffffull);	// _36 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
 	var10 = 0x80 + var6;	// _10 = BinOp(0x80 u32 ADD _6)
 	var37 = var10 - var3;	// _37 = BinOp(_10 SUB _3)
 	var34 = var37 & 0x7f;	// _34 = BinOp(_37 BIT_AND 0x7f u32)
-	var35.lo = var34; var35.hi = var34 < 0 ? -1 : 0;	// _35 = Cast(_34 as u128)
-	var11 = shl128(var36, var35.lo);
+	var35 = (uint128_t )var34;	// _35 = Cast(_34 as u128)
+	var11 = var36 << var35;
 	// ^ Call( _11 = "unchecked_shl"::<u128,>( _36, _35, ), bb13, bb5)
-	var38 = 0 != cmp128(make128_raw(0ull, 0ull), var11);	// _38 = BinOp(_11 NE 0x0 u128)
-	var40.lo = var38; var40.hi = var38 < 0 ? -1 : 0;	// _40 = Cast(_38 as u128)
-	var2 = or128(var39, var40);	// _2 = BinOp(_39 BIT_OR _40)
+	var38 = var11 != (uint128_t)0x0ull;	// _38 = BinOp(_11 NE 0x0 u128)
+	var40 = (uint128_t )var38;	// _40 = Cast(_38 as u128)
+	var2 = var39 | var40;	// _2 = BinOp(_39 BIT_OR _40)
 	// ^ Goto(14)
 bb14:
 	var12 = & var2;	// _12 = Borrow(Unique, _2)
-	var13 = and128(var2, var0);	// _13 = BinOp(_2 BIT_AND _0)
-	var41 = 0 != cmp128(make128_raw(0ull, 0ull), var13);	// _41 = BinOp(_13 NE 0x0 u128)
-	var42.lo = var41; var42.hi = var41 < 0 ? -1 : 0;	// _42 = Cast(_41 as u128)
-	(*var12) = or128((*var12), var42);	// _12* = BinOp(_12* BIT_OR _42)
+	var13 = var2 & var0;	// _13 = BinOp(_2 BIT_AND _0)
+	var41 = var13 != (uint128_t)0x0ull;	// _41 = BinOp(_13 NE 0x0 u128)
+	var42 = (uint128_t )var41;	// _42 = Cast(_41 as u128)
+	(*var12) = (*var12) | var42;	// _12* = BinOp(_12* BIT_OR _42)
 	// ^ drop(_12)
 	var14 = & var2;	// _14 = Borrow(Unique, _2)
-	(*var14) = add128((*var14), make128_raw(0ull, 1ull));	// _14* = BinOp(_14* ADD 0x1 u128)
+	(*var14) = (*var14) + (uint128_t)0x1ull;	// _14* = BinOp(_14* ADD 0x1 u128)
 	// ^ drop(_14)
 	var15 = & var2;	// _15 = Borrow(Unique, _2)
-	(*var15) = shr128((*var15), 0x2);	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
+	(*var15) = (*var15) >> 0x2;	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
 	// ^ drop(_15)
-	var43 = shl128(make128_raw(0ull, 1ull), var4);	// _43 = BinOp(0x1 u128 BIT_SHL _4)
-	var16 = and128(var2, var43);	// _16 = BinOp(_2 BIT_AND _43)
-	var7 = 0 != cmp128(make128_raw(0ull, 0ull), var16);	// _7 = BinOp(_16 NE 0x0 u128)
+	var43 = (uint128_t)0x1ull << var4;	// _43 = BinOp(0x1 u128 BIT_SHL _4)
+	var16 = var2 & var43;	// _16 = BinOp(_2 BIT_AND _43)
+	var7 = var16 != (uint128_t)0x0ull;	// _7 = BinOp(_16 NE 0x0 u128)
 	if(var7) goto bb15; else goto bb8;
 	// ^ If( _7 : 15, 8)
 bb15:
 	var17 = & var2;	// _17 = Borrow(Unique, _2)
-	(*var17) = shr128((*var17), 0x1);	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
+	(*var17) = (*var17) >> 0x1;	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
 	// ^ drop(_17)
 	var5 = var5 + 0x1;	// _5 = BinOp(_5 ADD 0x1 u32)
 	goto bb8;
@@ -9773,7 +10048,7 @@ double  ZRG3cR27compiler_builtins0_1_45_H925float4conv12int_to_float2gCjCo(
 	RUST_BOOL var42;	// bool
 	uint128_t var43;	// u128
 	uint128_t var44;	// u128
-	var7 = 0 == cmp128s(make128s_raw(0ull, 0ull), arg0);	// _7 = BinOp(a0 EQ +0 i128)
+	var7 = arg0 == (int128_t)0ll;	// _7 = BinOp(a0 EQ +0 i128)
 	if(var7) goto bb1; else goto bb2;
 	// ^ If( _7 : 1, 2)
 bb1:
@@ -9781,12 +10056,12 @@ bb1:
 	return rv;
 	// ^ Return
 bb2:
-	var0 = make128_raw(0ull, 4ull);	// _0 = Constant(0x4 u128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg0);	// _1 = BinOp(a0 LT +0 i128)
-	var2 = ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, make128s_raw(0ull, 0ull) );
+	var0 = (uint128_t)0x4ull;	// _0 = Constant(0x4 u128)
+	var1 = arg0 < (int128_t)0ll;	// _1 = BinOp(a0 LT +0 i128)
+	var2 = ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g( arg0, (int128_t)0ll );
 	// ^ Call( _2 = <i128 as ::"compiler_builtins-0_1_45_H92"::int::Int>::abs_diff( a0, +0 i128, ), bb3, bb5)
 	var18 = (intrinsic_ctlz_u128(var2));	// ^ Call( _18 = "ctlz"::<u128,>( _2, ), bb4, bb5)
-	var8 = var18.lo;	// _8 = Cast(_18 as u32)
+	var8 = (uint32_t )var18;	// _8 = Cast(_18 as u32)
 	var3 = 0x80 - var8;	// _3 = BinOp(0x80 u32 SUB _8)
 	var4 = 0x35;	// _4 = Constant(0x35 u32)
 	var5 = var3 - 0x1;	// _5 = BinOp(_3 SUB 0x1 u32)
@@ -9805,13 +10080,13 @@ bb7:
 	var22 = var4 - var3;	// _22 = BinOp(_4 SUB _3)
 	var21 = var2;	// _21 = Use(_2)
 	var19 = var22 & 0x7f;	// _19 = BinOp(_22 BIT_AND 0x7f u32)
-	var20.lo = var19; var20.hi = var19 < 0 ? -1 : 0;	// _20 = Cast(_19 as u128)
-	var2 = shl128(var21, var20.lo);
+	var20 = (uint128_t )var19;	// _20 = Cast(_19 as u128)
+	var2 = var21 << var20;
 	// ^ Call( _2 = "unchecked_shl"::<u128,>( _21, _20, ), bb8, bb5)
 bb8:
 	var23 = var5 + 0x3ff;	// _23 = BinOp(_5 ADD 0x3ff u32)
 	var31 = (uint64_t )var23;	// _31 = Cast(_23 as u64)
-	var32 = var2.lo;	// _32 = Cast(_2 as u64)
+	var32 = (uint64_t )var2;	// _32 = Cast(_2 as u64)
 	var26 = (uint64_t )var1;	// _26 = Cast(_1 as u64)
 	var25 = var26 << 0x3f;	// _25 = BinOp(_26 BIT_SHL 0x3f u32)
 	var28 = var31 << 0x34;	// _28 = BinOp(_31 BIT_SHL 0x34 u32)
@@ -9825,7 +10100,7 @@ bb8:
 	// ^ Return
 bb10:
 	var33 = var2;	// _33 = Use(_2)
-	var2 = shl128(var33, 0x1);	// _2 = BinOp(_33 BIT_SHL 0x1 u32)
+	var2 = var33 << 0x1;	// _2 = BinOp(_33 BIT_SHL 0x1 u32)
 	goto bb14;
 	// ^ Goto(14)
 bb11:
@@ -9834,39 +10109,39 @@ bb11:
 	// ^ If( _7 : 14, 12)
 bb12:
 	var34 = var3 - var6;	// _34 = BinOp(_3 SUB _6)
-	var40 = shr128(var2, var34);	// _40 = BinOp(_2 BIT_SHR _34)
-	var37 = and128(var2, make128_raw(18446744073709551615ull, 18446744073709551615ull));	// _37 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
+	var40 = var2 >> var34;	// _40 = BinOp(_2 BIT_SHR _34)
+	var37 = var2 & ( ((uint128_t)0xffffffffffffffffull << 64) | (uint128_t)0xffffffffffffffffull);	// _37 = BinOp(_2 BIT_AND 0xffffffffffffffffffffffffffffffff u128)
 	var10 = 0x80 + var6;	// _10 = BinOp(0x80 u32 ADD _6)
 	var38 = var10 - var3;	// _38 = BinOp(_10 SUB _3)
 	var35 = var38 & 0x7f;	// _35 = BinOp(_38 BIT_AND 0x7f u32)
-	var36.lo = var35; var36.hi = var35 < 0 ? -1 : 0;	// _36 = Cast(_35 as u128)
-	var11 = shl128(var37, var36.lo);
+	var36 = (uint128_t )var35;	// _36 = Cast(_35 as u128)
+	var11 = var37 << var36;
 	// ^ Call( _11 = "unchecked_shl"::<u128,>( _37, _36, ), bb13, bb5)
-	var39 = 0 != cmp128(make128_raw(0ull, 0ull), var11);	// _39 = BinOp(_11 NE 0x0 u128)
-	var41.lo = var39; var41.hi = var39 < 0 ? -1 : 0;	// _41 = Cast(_39 as u128)
-	var2 = or128(var40, var41);	// _2 = BinOp(_40 BIT_OR _41)
+	var39 = var11 != (uint128_t)0x0ull;	// _39 = BinOp(_11 NE 0x0 u128)
+	var41 = (uint128_t )var39;	// _41 = Cast(_39 as u128)
+	var2 = var40 | var41;	// _2 = BinOp(_40 BIT_OR _41)
 	// ^ Goto(14)
 bb14:
 	var12 = & var2;	// _12 = Borrow(Unique, _2)
-	var13 = and128(var2, var0);	// _13 = BinOp(_2 BIT_AND _0)
-	var42 = 0 != cmp128(make128_raw(0ull, 0ull), var13);	// _42 = BinOp(_13 NE 0x0 u128)
-	var43.lo = var42; var43.hi = var42 < 0 ? -1 : 0;	// _43 = Cast(_42 as u128)
-	(*var12) = or128((*var12), var43);	// _12* = BinOp(_12* BIT_OR _43)
+	var13 = var2 & var0;	// _13 = BinOp(_2 BIT_AND _0)
+	var42 = var13 != (uint128_t)0x0ull;	// _42 = BinOp(_13 NE 0x0 u128)
+	var43 = (uint128_t )var42;	// _43 = Cast(_42 as u128)
+	(*var12) = (*var12) | var43;	// _12* = BinOp(_12* BIT_OR _43)
 	// ^ drop(_12)
 	var14 = & var2;	// _14 = Borrow(Unique, _2)
-	(*var14) = add128((*var14), make128_raw(0ull, 1ull));	// _14* = BinOp(_14* ADD 0x1 u128)
+	(*var14) = (*var14) + (uint128_t)0x1ull;	// _14* = BinOp(_14* ADD 0x1 u128)
 	// ^ drop(_14)
 	var15 = & var2;	// _15 = Borrow(Unique, _2)
-	(*var15) = shr128((*var15), 0x2);	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
+	(*var15) = (*var15) >> 0x2;	// _15* = BinOp(_15* BIT_SHR 0x2 u32)
 	// ^ drop(_15)
-	var44 = shl128(make128_raw(0ull, 1ull), var4);	// _44 = BinOp(0x1 u128 BIT_SHL _4)
-	var16 = and128(var2, var44);	// _16 = BinOp(_2 BIT_AND _44)
-	var7 = 0 != cmp128(make128_raw(0ull, 0ull), var16);	// _7 = BinOp(_16 NE 0x0 u128)
+	var44 = (uint128_t)0x1ull << var4;	// _44 = BinOp(0x1 u128 BIT_SHL _4)
+	var16 = var2 & var44;	// _16 = BinOp(_2 BIT_AND _44)
+	var7 = var16 != (uint128_t)0x0ull;	// _7 = BinOp(_16 NE 0x0 u128)
 	if(var7) goto bb15; else goto bb8;
 	// ^ If( _7 : 15, 8)
 bb15:
 	var17 = & var2;	// _17 = Borrow(Unique, _2)
-	(*var17) = shr128((*var17), 0x1);	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
+	(*var17) = (*var17) >> 0x1;	// _17* = BinOp(_17* BIT_SHR 0x1 u32)
 	// ^ drop(_17)
 	var5 = var5 + 0x1;	// _5 = BinOp(_5 ADD 0x1 u32)
 	goto bb8;
@@ -10649,12 +10924,12 @@ bb8:
 	__builtin_sub_overflow(var103, 0x2ull, &var27);
 	// ^ Call( _27 = "wrapping_sub"::<u64,>( _103, 0x2 u64, ), bb29, bb4)
 	var120 = var16 << 0x2;	// _120 = BinOp(_16 BIT_SHL 0x2 u32)
-	var118.lo = var120; var118.hi = var120 < 0 ? -1 : 0;	// _118 = Cast(_120 as u128)
-	var119.lo = var27; var119.hi = var27 < 0 ? -1 : 0;	// _119 = Cast(_27 as u128)
-	mul128_o(var118, var119, &var122);
+	var118 = (uint128_t )var120;	// _118 = Cast(_120 as u128)
+	var119 = (uint128_t )var27;	// _119 = Cast(_27 as u128)
+	__builtin_mul_overflow(var118, var119, &var122);
 	// ^ Call( _122 = "wrapping_mul"::<u128,>( _118, _119, ), bb30, bb4)
-	var121 = shr128(var122, 0x40);	// _121 = BinOp(_122 BIT_SHR 0x40 u32)
-	var30 = var121.lo;	// _30 = Cast(_121 as u64)
+	var121 = var122 >> 0x40;	// _121 = BinOp(_122 BIT_SHR 0x40 u32)
+	var30 = (uint64_t )var121;	// _30 = Cast(_121 as u64)
 	var59 = var5 << 0x1;	// _59 = BinOp(_5 BIT_SHL 0x1 u32)
 	var35 = var30 < var59;	// _35 = BinOp(_30 LT _59)
 	if(var35) goto bb31; else goto bb34;
@@ -11575,13 +11850,13 @@ bb8:
 	(*var36) = (*var36) | var6;	// _36* = BinOp(_36* BIT_OR _6)
 	// ^ drop(_36)
 	var61 = var20 << var13;	// _61 = BinOp(_20 BIT_SHL _13)
-	var59.lo = var19; var59.hi = var19 < 0 ? -1 : 0;	// _59 = Cast(_19 as u128)
-	var60.lo = var61; var60.hi = var61 < 0 ? -1 : 0;	// _60 = Cast(_61 as u128)
-	mul128_o(var59, var60, &var63);
+	var59 = (uint128_t )var19;	// _59 = Cast(_19 as u128)
+	var60 = (uint128_t )var61;	// _60 = Cast(_61 as u128)
+	__builtin_mul_overflow(var59, var60, &var63);
 	// ^ Call( _63 = "wrapping_mul"::<u128,>( _59, _60, ), bb9, bb4)
-	var24 = var63.lo;	// _24 = Cast(_63 as u64)
-	var62 = shr128(var63, 0x40);	// _62 = BinOp(_63 BIT_SHR 0x40 u32)
-	var25 = var62.lo;	// _25 = Cast(_62 as u64)
+	var24 = (uint64_t )var63;	// _24 = Cast(_63 as u64)
+	var62 = var63 >> 0x40;	// _62 = BinOp(_63 BIT_SHR 0x40 u32)
+	var25 = (uint64_t )var62;	// _25 = Cast(_62 as u64)
 	var64 = (int32_t )var16;	// _64 = Cast(_16 as i32)
 	var65 = (int32_t )var17;	// _65 = Cast(_17 as i32)
 	__builtin_add_overflow(var64, var65, &var48);
@@ -12035,11 +12310,11 @@ int128_t  ZRG3cR27compiler_builtins0_1_45_H923int6addsub15__rust_i128_add0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var0.lo = arg0.lo; var0.hi = arg0.hi;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1.lo; var1.hi = arg1.hi;	// _1 = Cast(a1 as u128)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
 	var2 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( var0, var1 );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( _0, _1, ), bb1, bb2)
-	rv.lo = var2.lo; rv.hi = var2.hi;	// retval = Cast(_2 as i128)
+	rv = (int128_t )var2;	// retval = Cast(_2 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -12055,11 +12330,11 @@ int128_t  ZRG4cR27compiler_builtins0_1_45_H923int6addsub15__rust_i128_add_D0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var0.lo = arg0.lo; var0.hi = arg0.hi;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1.lo; var1.hi = arg1.hi;	// _1 = Cast(a1 as u128)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
 	var2 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( var0, var1 );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( _0, _1, ), bb1, bb2)
-	rv.lo = var2.lo; rv.hi = var2.hi;	// retval = Cast(_2 as i128)
+	rv = (int128_t )var2;	// retval = Cast(_2 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -12083,13 +12358,13 @@ TUP_2_ZRTCj_ZRTCw  ZRG3cR27compiler_builtins0_1_45_H923int6addsub16__rust_i128_a
 	int128_t var8;	// i128
 	var8 = arg1;	// _8 = Use(a1)
 	var7 = arg0;	// _7 = Use(a0)
-	var4.lo = arg0.lo; var4.hi = arg0.hi;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1.lo; var5.hi = arg1.hi;	// _5 = Cast(a1 as u128)
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
 	var6 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( var4, var5 );
 	// ^ Call( _6 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( _4, _5, ), bb1, bb2)
-	var0.lo = var6.lo; var0.hi = var6.hi;	// _0 = Cast(_6 as i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), var8);	// _1 = BinOp(_8 LT +0 i128)
-	var2 = 0 < cmp128s(var7, var0);	// _2 = BinOp(_0 LT _7)
+	var0 = (int128_t )var6;	// _0 = Cast(_6 as i128)
+	var1 = var8 < (int128_t)0ll;	// _1 = BinOp(_8 LT +0 i128)
+	var2 = var0 < var7;	// _2 = BinOp(_0 LT _7)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12117,13 +12392,13 @@ TUP_2_ZRTCj_ZRTCw  ZRG4cR27compiler_builtins0_1_45_H923int6addsub16__rust_i128_a
 	int128_t var8;	// i128
 	var8 = arg1;	// _8 = Use(a1)
 	var7 = arg0;	// _7 = Use(a0)
-	var4.lo = arg0.lo; var4.hi = arg0.hi;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1.lo; var5.hi = arg1.hi;	// _5 = Cast(a1 as u128)
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
 	var6 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( var4, var5 );
 	// ^ Call( _6 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( _4, _5, ), bb1, bb2)
-	var0.lo = var6.lo; var0.hi = var6.hi;	// _0 = Cast(_6 as i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), var8);	// _1 = BinOp(_8 LT +0 i128)
-	var2 = 0 < cmp128s(var7, var0);	// _2 = BinOp(_0 LT _7)
+	var0 = (int128_t )var6;	// _0 = Cast(_6 as i128)
+	var1 = var8 < (int128_t)0ll;	// _1 = BinOp(_8 LT +0 i128)
+	var2 = var0 < var7;	// _2 = BinOp(_0 LT _7)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12143,11 +12418,11 @@ int128_t  ZRG3cR27compiler_builtins0_1_45_H923int6addsub15__rust_i128_sub0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var0.lo = arg0.lo; var0.hi = arg0.hi;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1.lo; var1.hi = arg1.hi;	// _1 = Cast(a1 as u128)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
 	var2 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( var0, var1 );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( _0, _1, ), bb1, bb2)
-	rv.lo = var2.lo; rv.hi = var2.hi;	// retval = Cast(_2 as i128)
+	rv = (int128_t )var2;	// retval = Cast(_2 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -12163,11 +12438,11 @@ int128_t  ZRG4cR27compiler_builtins0_1_45_H923int6addsub15__rust_i128_sub_D0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var0.lo = arg0.lo; var0.hi = arg0.hi;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1.lo; var1.hi = arg1.hi;	// _1 = Cast(a1 as u128)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
 	var2 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( var0, var1 );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( _0, _1, ), bb1, bb2)
-	rv.lo = var2.lo; rv.hi = var2.hi;	// retval = Cast(_2 as i128)
+	rv = (int128_t )var2;	// retval = Cast(_2 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -12191,13 +12466,13 @@ TUP_2_ZRTCj_ZRTCw  ZRG3cR27compiler_builtins0_1_45_H923int6addsub16__rust_i128_s
 	int128_t var8;	// i128
 	var8 = arg1;	// _8 = Use(a1)
 	var7 = arg0;	// _7 = Use(a0)
-	var4.lo = arg0.lo; var4.hi = arg0.hi;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1.lo; var5.hi = arg1.hi;	// _5 = Cast(a1 as u128)
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
 	var6 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( var4, var5 );
 	// ^ Call( _6 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( _4, _5, ), bb1, bb2)
-	var0.lo = var6.lo; var0.hi = var6.hi;	// _0 = Cast(_6 as i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), var8);	// _1 = BinOp(_8 LT +0 i128)
-	var2 = 0 < cmp128s(var0, var7);	// _2 = BinOp(_7 LT _0)
+	var0 = (int128_t )var6;	// _0 = Cast(_6 as i128)
+	var1 = var8 < (int128_t)0ll;	// _1 = BinOp(_8 LT +0 i128)
+	var2 = var7 < var0;	// _2 = BinOp(_7 LT _0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12225,13 +12500,13 @@ TUP_2_ZRTCj_ZRTCw  ZRG4cR27compiler_builtins0_1_45_H923int6addsub16__rust_i128_s
 	int128_t var8;	// i128
 	var8 = arg1;	// _8 = Use(a1)
 	var7 = arg0;	// _7 = Use(a0)
-	var4.lo = arg0.lo; var4.hi = arg0.hi;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1.lo; var5.hi = arg1.hi;	// _5 = Cast(a1 as u128)
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
 	var6 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( var4, var5 );
 	// ^ Call( _6 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( _4, _5, ), bb1, bb2)
-	var0.lo = var6.lo; var0.hi = var6.hi;	// _0 = Cast(_6 as i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), var8);	// _1 = BinOp(_8 LT +0 i128)
-	var2 = 0 < cmp128s(var0, var7);	// _2 = BinOp(_7 LT _0)
+	var0 = (int128_t )var6;	// _0 = Cast(_6 as i128)
+	var1 = var8 < (int128_t)0ll;	// _1 = BinOp(_8 LT +0 i128)
+	var2 = var7 < var0;	// _2 = BinOp(_7 LT _0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12286,8 +12561,8 @@ TUP_2_ZRTCi_ZRTCw  ZRG3cR27compiler_builtins0_1_45_H923int6addsub16__rust_u128_a
 	var4 = arg0;	// _4 = Use(a0)
 	var0 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( arg0, arg1 );
 	// ^ Call( _0 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( a0, a1, ), bb1, bb2)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), var5);	// _1 = BinOp(_5 LT 0x0 u128)
-	var2 = 0 < cmp128(var4, var0);	// _2 = BinOp(_0 LT _4)
+	var1 = var5 < (uint128_t)0x0ull;	// _1 = BinOp(_5 LT 0x0 u128)
+	var2 = var0 < var4;	// _2 = BinOp(_0 LT _4)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12314,8 +12589,8 @@ TUP_2_ZRTCi_ZRTCw  ZRG4cR27compiler_builtins0_1_45_H923int6addsub16__rust_u128_a
 	var4 = arg0;	// _4 = Use(a0)
 	var0 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( arg0, arg1 );
 	// ^ Call( _0 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( a0, a1, ), bb1, bb2)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), var5);	// _1 = BinOp(_5 LT 0x0 u128)
-	var2 = 0 < cmp128(var4, var0);	// _2 = BinOp(_0 LT _4)
+	var1 = var5 < (uint128_t)0x0ull;	// _1 = BinOp(_5 LT 0x0 u128)
+	var2 = var0 < var4;	// _2 = BinOp(_0 LT _4)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12370,8 +12645,8 @@ TUP_2_ZRTCi_ZRTCw  ZRG3cR27compiler_builtins0_1_45_H923int6addsub16__rust_u128_s
 	var4 = arg0;	// _4 = Use(a0)
 	var0 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( arg0, arg1 );
 	// ^ Call( _0 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( a0, a1, ), bb1, bb2)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), var5);	// _1 = BinOp(_5 LT 0x0 u128)
-	var2 = 0 < cmp128(var0, var4);	// _2 = BinOp(_4 LT _0)
+	var1 = var5 < (uint128_t)0x0ull;	// _1 = BinOp(_5 LT 0x0 u128)
+	var2 = var4 < var0;	// _2 = BinOp(_4 LT _0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12398,8 +12673,8 @@ TUP_2_ZRTCi_ZRTCw  ZRG4cR27compiler_builtins0_1_45_H923int6addsub16__rust_u128_s
 	var4 = arg0;	// _4 = Use(a0)
 	var0 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( arg0, arg1 );
 	// ^ Call( _0 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( a0, a1, ), bb1, bb2)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), var5);	// _1 = BinOp(_5 LT 0x0 u128)
-	var2 = 0 < cmp128(var0, var4);	// _2 = BinOp(_4 LT _0)
+	var1 = var5 < (uint128_t)0x0ull;	// _1 = BinOp(_5 LT 0x0 u128)
+	var2 = var4 < var0;	// _2 = BinOp(_4 LT _0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -12824,22 +13099,22 @@ TUP_2_ZRTCj_ZRTCw  ZRG3cR27compiler_builtins0_1_45_H923int3mul20i128_overflowing
 	TUP_2_ZRTCj_ZRTCw var14;	// (i128, bool, )
 	var0 = arg0;	// _0 = Use(a0)
 	var1 = arg1;	// _1 = Use(a1)
-	var7 = 0 == cmp128s(make128s_raw(0ull, 0ull), arg0);	// _7 = BinOp(a0 EQ +0 i128)
+	var7 = arg0 == (int128_t)0ll;	// _7 = BinOp(a0 EQ +0 i128)
 	if(var7) goto bb2; else goto bb1;
 	// ^ If( _7 : 2, 1)
 bb1:
-	var7 = 0 == cmp128s(make128s_raw(0ull, 0ull), var1);	// _7 = BinOp(_1 EQ +0 i128)
+	var7 = var1 == (int128_t)0ll;	// _7 = BinOp(_1 EQ +0 i128)
 	if(var7) goto bb2; else goto bb3;
 	// ^ If( _7 : 2, 3)
 bb2:
 	;
-	rv._0 = make128s_raw(0ull, 0ull);
+	rv._0 = (int128_t)0ll;
 	rv._1 = false;	// retval = Tuple(+0 i128, false)
 	return rv;
 	// ^ Return
 bb3:
-	var2 = 0 < cmp128s(make128s_raw(0ull, 0ull), var0);	// _2 = BinOp(_0 LT +0 i128)
-	var3 = 0 < cmp128s(make128s_raw(0ull, 0ull), var1);	// _3 = BinOp(_1 LT +0 i128)
+	var2 = var0 < (int128_t)0ll;	// _2 = BinOp(_0 LT +0 i128)
+	var3 = var1 < (int128_t)0ll;	// _3 = BinOp(_1 LT +0 i128)
 	var7 = var2;	// _7 = Use(_2)
 	if(var2) goto bb4; else goto bb6;
 	// ^ If( _2 : 4, 6)
@@ -12859,12 +13134,12 @@ bb7:
 	// ^ Goto(9)
 bb9:
 	var4 = var2 != var3;	// _4 = BinOp(_2 NE _3)
-	var8.lo = var0.lo; var8.hi = var0.hi;	// _8 = Cast(_0 as u128)
-	var9.lo = var1.lo; var9.hi = var1.hi;	// _9 = Cast(_1 as u128)
+	var8 = (uint128_t )var0;	// _8 = Cast(_0 as u128)
+	var9 = (uint128_t )var1;	// _9 = Cast(_1 as u128)
 	var10 = ZRQCi3cR27compiler_builtins0_1_45_H923int3mul5UMulo0g4mulo0g( var8, var9 );
 	// ^ Call( _10 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::mul::UMulo>::mulo( _8, _9, ), bb10, bb11)
 	var5 = var10._1;	// _5 = Use(_10.1)
-	var6.lo = var10._0.lo; var6.hi = var10._0.hi;	// _6 = Cast(_10.0 as i128)
+	var6 = (int128_t )var10._0;	// _6 = Cast(_10.0 as i128)
 	var7 = var4;	// _7 = Use(_4)
 	if(var4) goto bb12; else goto bb14;
 	// ^ If( _4 : 12, 14)
@@ -12875,7 +13150,7 @@ bb12:
 	var6 = var14._0;	// _6 = Use(_14.0)
 	// ^ Goto(14)
 bb14:
-	var11 = 0 < cmp128s(make128s_raw(0ull, 0ull), var6);	// _11 = BinOp(_6 LT +0 i128)
+	var11 = var6 < (int128_t)0ll;	// _11 = BinOp(_6 LT +0 i128)
 	var7 = var11 != var4;	// _7 = BinOp(_11 NE _4)
 	if(var7) goto bb15; else goto bb16;
 	// ^ If( _7 : 15, 16)
@@ -13380,8 +13655,8 @@ int128_t  ZRG3cR27compiler_builtins0_1_45_H923int4sdiv11__divmodti40g(
 	TUP_2_ZRTCj_ZRTCw var14;	// (i128, bool, )
 	TUP_2_ZRTCj_ZRTCw var15;	// (i128, bool, )
 	TUP_2_ZRTCj_ZRTCw var16;	// (i128, bool, )
-	var0 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg0);	// _0 = BinOp(a0 LT +0 i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg1);	// _1 = BinOp(a1 LT +0 i128)
+	var0 = arg0 < (int128_t)0ll;	// _0 = BinOp(a0 LT +0 i128)
+	var1 = arg1 < (int128_t)0ll;	// _1 = BinOp(a1 LT +0 i128)
 	var2 = arg0;	// _2 = Use(a0)
 	var3 = arg1;	// _3 = Use(a1)
 	var7 = var0;	// _7 = Use(_0)
@@ -13402,15 +13677,15 @@ bb4:
 	var3 = var14._0;	// _3 = Use(_14.0)
 	// ^ Goto(6)
 bb6:
-	var4.lo = (*arg2).lo; var4.hi = (*arg2).hi;	// _4 = Cast(a2* as u128)
-	var8.lo = var2.lo; var8.hi = var2.hi;	// _8 = Cast(_2 as u128)
-	var9.lo = var3.lo; var9.hi = var3.hi;	// _9 = Cast(_3 as u128)
+	var4 = (uint128_t )(*arg2);	// _4 = Cast(a2* as u128)
+	var8 = (uint128_t )var2;	// _8 = Cast(_2 as u128)
+	var9 = (uint128_t )var3;	// _9 = Cast(_3 as u128)
 	var10 = & var4;	// _10 = Borrow(Unique, _4)
 	var11.DATA.var_1._0 = var10;	// _11 = Variant(::"core-0_0_0"::option::Option<&'#local0 mut u128,> #1, {_10})
 	var12 = ZRG3cR27compiler_builtins0_1_45_H923int4udiv12__udivmodti40g( var8, var9, var11 );
 	// ^ Call( _12 = ::"compiler_builtins-0_1_45_H92"::int::udiv::__udivmodti4<'#local0,>( _8, _9, _11, ), bb7, bb8)
-	var5.lo = var12.lo; var5.hi = var12.hi;	// _5 = Cast(_12 as i128)
-	var6.lo = var4.lo; var6.hi = var4.hi;	// _6 = Cast(_4 as i128)
+	var5 = (int128_t )var12;	// _5 = Cast(_12 as i128)
+	var6 = (int128_t )var4;	// _6 = Cast(_4 as i128)
 	var7 = var0;	// _7 = Use(_0)
 	if(var0) goto bb9; else goto bb11;
 	// ^ If( _0 : 9, 11)
@@ -13550,8 +13825,8 @@ int128_t  ZRG3cR27compiler_builtins0_1_45_H923int4sdiv8__divti30g(
 	uint128_t var9;	// u128
 	uint128_t var10;	// u128
 	TUP_2_ZRTCj_ZRTCw var11;	// (i128, bool, )
-	var0 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg0);	// _0 = BinOp(a0 LT +0 i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg1);	// _1 = BinOp(a1 LT +0 i128)
+	var0 = arg0 < (int128_t)0ll;	// _0 = BinOp(a0 LT +0 i128)
+	var1 = arg1 < (int128_t)0ll;	// _1 = BinOp(a1 LT +0 i128)
 	var2 = arg0;	// _2 = Use(a0)
 	var3 = arg1;	// _3 = Use(a1)
 	var5 = var0;	// _5 = Use(_0)
@@ -13572,11 +13847,11 @@ bb4:
 	var3 = var7._0;	// _3 = Use(_7.0)
 	// ^ Goto(6)
 bb6:
-	var9.lo = var2.lo; var9.hi = var2.hi;	// _9 = Cast(_2 as u128)
-	var10.lo = var3.lo; var10.hi = var3.hi;	// _10 = Cast(_3 as u128)
+	var9 = (uint128_t )var2;	// _9 = Cast(_2 as u128)
+	var10 = (uint128_t )var3;	// _10 = Cast(_3 as u128)
 	var8 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem12u128_div_rem0g( var9, var10 );
 	// ^ Call( _8 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u128_div_rem( _9, _10, ), bb7, bb8)
-	var4.lo = var8._0.lo; var4.hi = var8._0.hi;	// _4 = Cast(_8.0 as i128)
+	var4 = (int128_t )var8._0;	// _4 = Cast(_8.0 as i128)
 	var5 = var0 != var1;	// _5 = BinOp(_0 NE _1)
 	if(var5) goto bb9; else goto bb11;
 	// ^ If( _5 : 9, 11)
@@ -13769,8 +14044,8 @@ int128_t  ZRG3cR27compiler_builtins0_1_45_H923int4sdiv8__modti30g(
 	uint128_t var8;	// u128
 	uint128_t var9;	// u128
 	TUP_2_ZRTCj_ZRTCw var10;	// (i128, bool, )
-	var0 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg0);	// _0 = BinOp(a0 LT +0 i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg1);	// _1 = BinOp(a1 LT +0 i128)
+	var0 = arg0 < (int128_t)0ll;	// _0 = BinOp(a0 LT +0 i128)
+	var1 = arg1 < (int128_t)0ll;	// _1 = BinOp(a1 LT +0 i128)
 	var2 = arg0;	// _2 = Use(a0)
 	var3 = arg1;	// _3 = Use(a1)
 	if(var0) goto bb1; else goto bb3;
@@ -13789,11 +14064,11 @@ bb4:
 	var3 = var6._0;	// _3 = Use(_6.0)
 	// ^ Goto(6)
 bb6:
-	var8.lo = var2.lo; var8.hi = var2.hi;	// _8 = Cast(_2 as u128)
-	var9.lo = var3.lo; var9.hi = var3.hi;	// _9 = Cast(_3 as u128)
+	var8 = (uint128_t )var2;	// _8 = Cast(_2 as u128)
+	var9 = (uint128_t )var3;	// _9 = Cast(_3 as u128)
 	var7 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem12u128_div_rem0g( var8, var9 );
 	// ^ Call( _7 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u128_div_rem( _8, _9, ), bb7, bb8)
-	var4.lo = var7._1.lo; var4.hi = var7._1.hi;	// _4 = Cast(_7.1 as i128)
+	var4 = (int128_t )var7._1;	// _4 = Cast(_7.1 as i128)
 	if(var0) goto bb9; else goto bb11;
 	// ^ If( _0 : 9, 11)
 bb8: _Unwind_Resume(); // Diverge
@@ -14088,13 +14363,13 @@ TUP_2_ZRTCg_ZRTCg  ZRG4cR27compiler_builtins0_1_45_H923int19specialized_div_remB
 	uint64_t var3;	// u64
 	uint128_t var4;	// u128
 	uint128_t var5;	// u128
-	var4.lo = arg0; var4.hi = arg0 < 0 ? -1 : 0;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1; var5.hi = arg1 < 0 ? -1 : 0;	// _5 = Cast(a1 as u128)
-	mul128_o(var4, var5, &var0);
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
+	__builtin_mul_overflow(var4, var5, &var0);
 	// ^ Call( _0 = "wrapping_mul"::<u128,>( _4, _5, ), bb1, bb2)
-	var1 = var0.lo;	// _1 = Cast(_0 as u64)
-	var2 = shr128(var0, 64);	// _2 = BinOp(_0 BIT_SHR +64 i32)
-	var3 = var2.lo;	// _3 = Cast(_2 as u64)
+	var1 = (uint64_t )var0;	// _1 = Cast(_0 as u64)
+	var2 = var0 >> 64;	// _2 = BinOp(_0 BIT_SHR +64 i32)
+	var3 = (uint64_t )var2;	// _3 = Cast(_2 as u64)
 	;
 	rv._0 = var1;
 	rv._1 = var3;	// retval = Tuple(_1, _3)
@@ -14119,16 +14394,16 @@ TUP_2_ZRTCg_ZRTCg  ZRG4cR27compiler_builtins0_1_45_H923int19specialized_div_remB
 	uint128_t var5;	// u128
 	uint128_t var6;	// u128
 	uint128_t var7;	// u128
-	var4.lo = arg0; var4.hi = arg0 < 0 ? -1 : 0;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1; var5.hi = arg1 < 0 ? -1 : 0;	// _5 = Cast(a1 as u128)
-	mul128_o(var4, var5, &var6);
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
+	__builtin_mul_overflow(var4, var5, &var6);
 	// ^ Call( _6 = "wrapping_mul"::<u128,>( _4, _5, ), bb1, bb3)
-	var7.lo = arg2; var7.hi = arg2 < 0 ? -1 : 0;	// _7 = Cast(a2 as u128)
-	add128_o(var6, var7, &var0);
+	var7 = (uint128_t )arg2;	// _7 = Cast(a2 as u128)
+	__builtin_add_overflow(var6, var7, &var0);
 	// ^ Call( _0 = "wrapping_add"::<u128,>( _6, _7, ), bb2, bb3)
-	var1 = var0.lo;	// _1 = Cast(_0 as u64)
-	var2 = shr128(var0, 64);	// _2 = BinOp(_0 BIT_SHR +64 i32)
-	var3 = var2.lo;	// _3 = Cast(_2 as u64)
+	var1 = (uint64_t )var0;	// _1 = Cast(_0 as u64)
+	var2 = var0 >> 64;	// _2 = BinOp(_0 BIT_SHR +64 i32)
+	var3 = (uint64_t )var2;	// _3 = Cast(_2 as u64)
 	;
 	rv._0 = var1;
 	rv._1 = var3;	// retval = Tuple(_1, _3)
@@ -14227,12 +14502,12 @@ uint128_t  ZRG4cR27compiler_builtins0_1_45_H923int19specialized_div_rem8delegate
 	RUST_BOOL var79;	// bool
 	RUST_BOOL var80;	// bool
 	tBANG var81 = {0};	// !
-	var0 = arg0.lo;	// _0 = Cast(a0 as u64)
-	var35 = shr128(arg0, 64);	// _35 = BinOp(a0 BIT_SHR +64 i32)
-	var1 = var35.lo;	// _1 = Cast(_35 as u64)
-	var2 = arg1.lo;	// _2 = Cast(a1 as u64)
-	var36 = shr128(arg1, 64);	// _36 = BinOp(a1 BIT_SHR +64 i32)
-	var3 = var36.lo;	// _3 = Cast(_36 as u64)
+	var0 = (uint64_t )arg0;	// _0 = Cast(a0 as u64)
+	var35 = arg0 >> 64;	// _35 = BinOp(a0 BIT_SHR +64 i32)
+	var1 = (uint64_t )var35;	// _1 = Cast(_35 as u64)
+	var2 = (uint64_t )arg1;	// _2 = Cast(a1 as u64)
+	var36 = arg1 >> 64;	// _36 = BinOp(a1 BIT_SHR +64 i32)
+	var3 = (uint64_t )var36;	// _3 = Cast(_36 as u64)
 	var79 = var2 == 0x0ull;	// _79 = BinOp(_2 EQ 0x0 u64)
 	var37 = var3 == 0x0ull;	// _37 = BinOp(_3 EQ 0x0 u64)
 	var80 = var1 == 0x0ull;	// _80 = BinOp(_1 EQ 0x0 u64)
@@ -14245,12 +14520,12 @@ bb2:
 	if(var80) goto bb4; else goto bb3;
 	// ^ If( _80 : 4, 3)
 bb3:
-	var34 = 0 < cmp128(arg1, arg0);	// _34 = BinOp(a0 LT a1)
+	var34 = arg0 < arg1;	// _34 = BinOp(a0 LT a1)
 	if(var34) goto bb4; else goto bb5;
 	// ^ If( _34 : 4, 5)
 bb4:
 	(*arg2) = arg0;	// a2* = Use(a0)
-	rv = make128_raw(0ull, 0ull);	// retval = Constant(0x0 u128)
+	rv = (uint128_t)0x0ull;	// retval = Constant(0x0 u128)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
@@ -14259,32 +14534,32 @@ bb5:
 	var28 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem23u64_normalization_shift0g( var1, var3, false );
 	// ^ Call( _28 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_normalization_shift( _1, _3, false, ), bb6, bb9)
 	var29 = arg0;	// _29 = Use(a0)
-	var30 = shl128(arg1, var28);	// _30 = BinOp(a1 BIT_SHL _28)
+	var30 = arg1 << var28;	// _30 = BinOp(a1 BIT_SHL _28)
 	var31 = 0x1ull << var28;	// _31 = BinOp(0x1 u64 BIT_SHL _28)
 	var32 = 0x0ull;	// _32 = Constant(0x0 u64)
 	// ^ Goto(7)
 bb7:
-	sub128_o(var29, var30, &var33);
+	__builtin_sub_overflow(var29, var30, &var33);
 	// ^ Call( _33 = "wrapping_sub"::<u128,>( _29, _30, ), bb8, bb9)
-	var78.lo = var33.lo; var78.hi = var33.hi;	// _78 = Cast(_33 as i128)
-	var34 = 0 <= cmp128s(var78, make128s_raw(0ull, 0ull));	// _34 = BinOp(+0 i128 LE _78)
+	var78 = (int128_t )var33;	// _78 = Cast(_33 as i128)
+	var34 = (int128_t)0ll <= var78;	// _34 = BinOp(+0 i128 LE _78)
 	if(var34) goto bb10; else goto bb11;
 	// ^ If( _34 : 10, 11)
 bb9: _Unwind_Resume(); // Diverge
 bb10:
 	var29 = var33;	// _29 = Use(_33)
 	var32 = var32 | var31;	// _32 = BinOp(_32 BIT_OR _31)
-	var34 = 0 < cmp128(var27, var33);	// _34 = BinOp(_33 LT _27)
+	var34 = var33 < var27;	// _34 = BinOp(_33 LT _27)
 	if(var34) goto bb12; else goto bb11;
 	// ^ If( _34 : 12, 11)
 bb11:
-	var30 = shr128(var30, 1);	// _30 = BinOp(_30 BIT_SHR +1 i32)
+	var30 = var30 >> 1;	// _30 = BinOp(_30 BIT_SHR +1 i32)
 	var31 = var31 >> 1;	// _31 = BinOp(_31 BIT_SHR +1 i32)
 	goto bb7;
 	// ^ Goto(7)
 bb12:
 	(*arg2) = var29;	// a2* = Use(_29)
-	rv.lo = var32; rv.hi = var32 < 0 ? -1 : 0;	// retval = Cast(_32 as u128)
+	rv = (uint128_t )var32;	// retval = Cast(_32 as u128)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
@@ -14316,13 +14591,13 @@ bb20:
 	if(var34) goto bb21; else goto bb23;
 	// ^ If( _34 : 21, 23)
 bb21:
-	var43 = arg0.lo;	// _43 = Cast(a0 as u64)
-	var44 = arg1.lo;	// _44 = Cast(a1 as u64)
+	var43 = (uint64_t )arg0;	// _43 = Cast(a0 as u64)
+	var44 = (uint64_t )arg1;	// _44 = Cast(a1 as u64)
 	var13 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var43, var44 );
 	// ^ Call( _13 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _43, _44, ), bb22, bb9)
-	(*arg2).lo = var13._1; (*arg2).hi = var13._1 < 0 ? -1 : 0;	// a2* = Cast(_13.1 as u128)
-	var45.lo = var13._0; var45.hi = var13._0 < 0 ? -1 : 0;	// _45 = Cast(_13.0 as u128)
-	rv = or128(make128_raw(1ull, 0ull), var45);	// retval = BinOp(0x10000000000000000 u128 BIT_OR _45)
+	(*arg2) = (uint128_t )var13._1;	// a2* = Cast(_13.1 as u128)
+	var45 = (uint128_t )var13._0;	// _45 = Cast(_13.0 as u128)
+	rv = ( ((uint128_t)0x1ull << 64) | (uint128_t)0x0ull) | var45;	// retval = BinOp(0x10000000000000000 u128 BIT_OR _45)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
@@ -14337,86 +14612,86 @@ bb24:
 	var48 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var1, var14 );
 	// ^ Call( _48 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _1, _14, ), bb25, bb9)
 	var15 = var48._0;	// _15 = Use(_48.0)
-	var49 = shr128(arg0, 32);	// _49 = BinOp(a0 BIT_SHR +32 i32)
-	var50 = var49.lo;	// _50 = Cast(_49 as u32)
+	var49 = arg0 >> 32;	// _49 = BinOp(a0 BIT_SHR +32 i32)
+	var50 = (uint32_t )var49;	// _50 = Cast(_49 as u32)
 	var51 = (uint64_t )var50;	// _51 = Cast(_50 as u64)
 	var52 = var48._1 << 32;	// _52 = BinOp(_48.1 BIT_SHL +32 i32)
 	var53 = var51 | var52;	// _53 = BinOp(_51 BIT_OR _52)
 	var54 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var53, var14 );
 	// ^ Call( _54 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _53, _14, ), bb26, bb9)
 	var16 = var54._0;	// _16 = Use(_54.0)
-	var55 = arg0.lo;	// _55 = Cast(a0 as u32)
+	var55 = (uint32_t )arg0;	// _55 = Cast(a0 as u32)
 	var56 = (uint64_t )var55;	// _56 = Cast(_55 as u64)
 	var57 = var54._1 << 32;	// _57 = BinOp(_54.1 BIT_SHL +32 i32)
 	var58 = var56 | var57;	// _58 = BinOp(_56 BIT_OR _57)
 	var59 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var58, var14 );
 	// ^ Call( _59 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _58, _14, ), bb27, bb9)
-	(*arg2).lo = var59._1; (*arg2).hi = var59._1 < 0 ? -1 : 0;	// a2* = Cast(_59.1 as u128)
-	var61.lo = var59._0; var61.hi = var59._0 < 0 ? -1 : 0;	// _61 = Cast(_59.0 as u128)
-	var63.lo = var16; var63.hi = var16 < 0 ? -1 : 0;	// _63 = Cast(_16 as u128)
-	var62 = shl128(var63, 32);	// _62 = BinOp(_63 BIT_SHL +32 i32)
-	var60 = or128(var61, var62);	// _60 = BinOp(_61 BIT_OR _62)
-	var65.lo = var15; var65.hi = var15 < 0 ? -1 : 0;	// _65 = Cast(_15 as u128)
-	var64 = shl128(var65, 64);	// _64 = BinOp(_65 BIT_SHL +64 i32)
-	rv = or128(var60, var64);	// retval = BinOp(_60 BIT_OR _64)
+	(*arg2) = (uint128_t )var59._1;	// a2* = Cast(_59.1 as u128)
+	var61 = (uint128_t )var59._0;	// _61 = Cast(_59.0 as u128)
+	var63 = (uint128_t )var16;	// _63 = Cast(_16 as u128)
+	var62 = var63 << 32;	// _62 = BinOp(_63 BIT_SHL +32 i32)
+	var60 = var61 | var62;	// _60 = BinOp(_61 BIT_OR _62)
+	var65 = (uint128_t )var15;	// _65 = Cast(_15 as u128)
+	var64 = var65 << 64;	// _64 = BinOp(_65 BIT_SHL +64 i32)
+	rv = var60 | var64;	// retval = BinOp(_60 BIT_OR _64)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
 bb28:
-	var17 = arg0.lo;	// _17 = Cast(a0 as u64)
+	var17 = (uint64_t )arg0;	// _17 = Cast(a0 as u64)
 	var18 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var1, var2 );
 	// ^ Call( _18 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _1, _2, ), bb29, bb9)
 	var19 = var18._0;	// _19 = Use(_18.0)
-	var66.lo = var17; var66.hi = var17 < 0 ? -1 : 0;	// _66 = Cast(_17 as u128)
-	var68.lo = var18._1; var68.hi = var18._1 < 0 ? -1 : 0;	// _68 = Cast(_18.1 as u128)
-	var67 = shl128(var68, 64);	// _67 = BinOp(_68 BIT_SHL +64 i32)
-	var20 = or128(var66, var67);	// _20 = BinOp(_66 BIT_OR _67)
-	var34 = 0 < cmp128(arg1, var20);	// _34 = BinOp(_20 LT a1)
+	var66 = (uint128_t )var17;	// _66 = Cast(_17 as u128)
+	var68 = (uint128_t )var18._1;	// _68 = Cast(_18.1 as u128)
+	var67 = var68 << 64;	// _67 = BinOp(_68 BIT_SHL +64 i32)
+	var20 = var66 | var67;	// _20 = BinOp(_66 BIT_OR _67)
+	var34 = var20 < arg1;	// _34 = BinOp(_20 LT a1)
 	if(var34) goto bb30; else goto bb31;
 	// ^ If( _34 : 30, 31)
 bb30:
 	(*arg2) = var20;	// a2* = Use(_20)
-	var69.lo = var19; var69.hi = var19 < 0 ? -1 : 0;	// _69 = Cast(_19 as u128)
-	rv = shl128(var69, 64);	// retval = BinOp(_69 BIT_SHL +64 i32)
+	var69 = (uint128_t )var19;	// _69 = Cast(_19 as u128)
+	rv = var69 << 64;	// retval = BinOp(_69 BIT_SHL +64 i32)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
 bb31:
-	var21 = shl128(arg1, 63);	// _21 = BinOp(a1 BIT_SHL +63 i32)
+	var21 = arg1 << 63;	// _21 = BinOp(a1 BIT_SHL +63 i32)
 	var22 = 0x8000000000000000ull;	// _22 = Constant(0x8000000000000000 u64)
 	var23 = 0x0ull;	// _23 = Constant(0x0 u64)
 	// ^ Goto(32)
 bb32:
-	sub128_o(var20, var21, &var24);
+	__builtin_sub_overflow(var20, var21, &var24);
 	// ^ Call( _24 = "wrapping_sub"::<u128,>( _20, _21, ), bb33, bb9)
-	var70.lo = var24.lo; var70.hi = var24.hi;	// _70 = Cast(_24 as i128)
-	var34 = 0 <= cmp128s(var70, make128s_raw(0ull, 0ull));	// _34 = BinOp(+0 i128 LE _70)
+	var70 = (int128_t )var24;	// _70 = Cast(_24 as i128)
+	var34 = (int128_t)0ll <= var70;	// _34 = BinOp(+0 i128 LE _70)
 	if(var34) goto bb34; else goto bb35;
 	// ^ If( _34 : 34, 35)
 bb34:
 	var20 = var24;	// _20 = Use(_24)
 	var23 = var23 | var22;	// _23 = BinOp(_23 BIT_OR _22)
-	var71 = shr128(var24, 64);	// _71 = BinOp(_24 BIT_SHR +64 i32)
-	var25 = var71.lo;	// _25 = Cast(_71 as u64)
+	var71 = var24 >> 64;	// _71 = BinOp(_24 BIT_SHR +64 i32)
+	var25 = (uint64_t )var71;	// _25 = Cast(_71 as u64)
 	var34 = var25 == 0x0ull;	// _34 = BinOp(_25 EQ 0x0 u64)
 	if(var34) goto bb36; else goto bb35;
 	// ^ If( _34 : 36, 35)
 bb35:
-	var21 = shr128(var21, 1);	// _21 = BinOp(_21 BIT_SHR +1 i32)
+	var21 = var21 >> 1;	// _21 = BinOp(_21 BIT_SHR +1 i32)
 	var22 = var22 >> 1;	// _22 = BinOp(_22 BIT_SHR +1 i32)
 	goto bb32;
 	// ^ Goto(32)
 bb36:
-	var72 = var20.lo;	// _72 = Cast(_20 as u64)
+	var72 = (uint64_t )var20;	// _72 = Cast(_20 as u64)
 	var26 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var72, var2 );
 	// ^ Call( _26 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _72, _2, ), bb37, bb9)
-	(*arg2).lo = var26._1; (*arg2).hi = var26._1 < 0 ? -1 : 0;	// a2* = Cast(_26.1 as u128)
-	var74.lo = var26._0; var74.hi = var26._0 < 0 ? -1 : 0;	// _74 = Cast(_26.0 as u128)
-	var75.lo = var23; var75.hi = var23 < 0 ? -1 : 0;	// _75 = Cast(_23 as u128)
-	var73 = or128(var74, var75);	// _73 = BinOp(_74 BIT_OR _75)
-	var77.lo = var19; var77.hi = var19 < 0 ? -1 : 0;	// _77 = Cast(_19 as u128)
-	var76 = shl128(var77, 64);	// _76 = BinOp(_77 BIT_SHL +64 i32)
-	rv = or128(var73, var76);	// retval = BinOp(_73 BIT_OR _76)
+	(*arg2) = (uint128_t )var26._1;	// a2* = Cast(_26.1 as u128)
+	var74 = (uint128_t )var26._0;	// _74 = Cast(_26.0 as u128)
+	var75 = (uint128_t )var23;	// _75 = Cast(_23 as u128)
+	var73 = var74 | var75;	// _73 = BinOp(_74 BIT_OR _75)
+	var77 = (uint128_t )var19;	// _77 = Cast(_19 as u128)
+	var76 = var77 << 64;	// _76 = BinOp(_77 BIT_SHL +64 i32)
+	rv = var73 | var76;	// retval = BinOp(_73 BIT_OR _76)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
@@ -14428,46 +14703,46 @@ bb39:
 	var38 = 0x40ull - var5;	// _38 = BinOp(0x40 usize SUB _5)
 	// ^ Goto(40)
 bb40:
-	var6 = shl128(arg1, var38);	// _6 = BinOp(a1 BIT_SHL _38)
+	var6 = arg1 << var38;	// _6 = BinOp(a1 BIT_SHL _38)
 	var7 = 0x1ull << var38;	// _7 = BinOp(0x1 u64 BIT_SHL _38)
 	var8 = 0x0ull;	// _8 = Constant(0x0 u64)
 	var9 = arg0;	// _9 = Use(a0)
 	// ^ Goto(41)
 bb41:
-	sub128_o(var9, var6, &var10);
+	__builtin_sub_overflow(var9, var6, &var10);
 	// ^ Call( _10 = "wrapping_sub"::<u128,>( _9, _6, ), bb42, bb9)
-	var39.lo = var10.lo; var39.hi = var10.hi;	// _39 = Cast(_10 as i128)
-	var34 = 0 <= cmp128s(var39, make128s_raw(0ull, 0ull));	// _34 = BinOp(+0 i128 LE _39)
+	var39 = (int128_t )var10;	// _39 = Cast(_10 as i128)
+	var34 = (int128_t)0ll <= var39;	// _34 = BinOp(+0 i128 LE _39)
 	if(var34) goto bb43; else goto bb44;
 	// ^ If( _34 : 43, 44)
 bb43:
 	var9 = var10;	// _9 = Use(_10)
 	var8 = var8 | var7;	// _8 = BinOp(_8 BIT_OR _7)
-	var40 = shr128(var10, 64);	// _40 = BinOp(_10 BIT_SHR +64 i32)
-	var11 = var40.lo;	// _11 = Cast(_40 as u64)
+	var40 = var10 >> 64;	// _40 = BinOp(_10 BIT_SHR +64 i32)
+	var11 = (uint64_t )var40;	// _11 = Cast(_40 as u64)
 	var34 = var11 == 0x0ull;	// _34 = BinOp(_11 EQ 0x0 u64)
 	if(var34) goto bb45; else goto bb44;
 	// ^ If( _34 : 45, 44)
 bb44:
-	var6 = shr128(var6, 1);	// _6 = BinOp(_6 BIT_SHR +1 i32)
+	var6 = var6 >> 1;	// _6 = BinOp(_6 BIT_SHR +1 i32)
 	var7 = var7 >> 1;	// _7 = BinOp(_7 BIT_SHR +1 i32)
 	goto bb41;
 	// ^ Goto(41)
 bb45:
-	var41 = var9.lo;	// _41 = Cast(_9 as u64)
+	var41 = (uint64_t )var9;	// _41 = Cast(_9 as u64)
 	var12 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var41, var2 );
 	// ^ Call( _12 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _41, _2, ), bb46, bb9)
-	(*arg2).lo = var12._1; (*arg2).hi = var12._1 < 0 ? -1 : 0;	// a2* = Cast(_12.1 as u128)
+	(*arg2) = (uint128_t )var12._1;	// a2* = Cast(_12.1 as u128)
 	var42 = var8 | var12._0;	// _42 = BinOp(_8 BIT_OR _12.0)
-	rv.lo = var42; rv.hi = var42 < 0 ? -1 : 0;	// retval = Cast(_42 as u128)
+	rv = (uint128_t )var42;	// retval = Cast(_42 as u128)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
 bb47:
 	var4 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var0, var2 );
 	// ^ Call( _4 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _0, _2, ), bb48, bb9)
-	(*arg2).lo = var4._1; (*arg2).hi = var4._1 < 0 ? -1 : 0;	// a2* = Cast(_4.1 as u128)
-	rv.lo = var4._0; rv.hi = var4._0 < 0 ? -1 : 0;	// retval = Cast(_4.0 as u128)
+	(*arg2) = (uint128_t )var4._1;	// a2* = Cast(_4.1 as u128)
+	rv = (uint128_t )var4._0;	// retval = Cast(_4.0 as u128)
 	// ^ drop(a2)
 	return rv;
 	// ^ Return
@@ -14604,7 +14879,7 @@ TUP_2_ZRTCi_ZRTCi  ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem1
 	uint128_t var121;	// u128
 	tBANG var122 = {0};	// !
 	var0 = 0x40;	// _0 = Constant(0x40 u32)
-	var25 = 0 == cmp128(make128_raw(0ull, 0ull), arg1);	// _25 = BinOp(a1 EQ 0x0 u128)
+	var25 = arg1 == (uint128_t)0x0ull;	// _25 = BinOp(a1 EQ 0x0 u128)
 	if(var25) goto bb1; else goto bb2;
 	// ^ If( _25 : 1, 2)
 bb1:
@@ -14613,15 +14888,15 @@ bb1:
 	// ^ Call( _122 = "unreachable"::( ), bb5, bb5)
 bb2:
 	var103 = (intrinsic_ctlz_u128(arg1));	// ^ Call( _103 = "ctlz"::<u128,>( a1, ), bb3, bb5)
-	var1 = var103.lo;	// _1 = Cast(_103 as u32)
+	var1 = (uint32_t )var103;	// _1 = Cast(_103 as u32)
 	var104 = (intrinsic_ctlz_u128(arg0));	// ^ Call( _104 = "ctlz"::<u128,>( a0, ), bb4, bb5)
-	var2 = var104.lo;	// _2 = Cast(_104 as u32)
+	var2 = (uint32_t )var104;	// _2 = Cast(_104 as u32)
 	var25 = var1 <= var2;	// _25 = BinOp(_1 LE _2)
 	if(var25) goto bb6; else goto bb7;
 	// ^ If( _25 : 6, 7)
 bb5: _Unwind_Resume(); // Diverge
 bb6:
-	var25 = 0 >= cmp128(arg1, arg0);	// _25 = BinOp(a0 GE a1)
+	var25 = arg0 >= arg1;	// _25 = BinOp(a0 GE a1)
 	if(var25) goto bb45; else goto bb46;
 	// ^ If( _25 : 45, 46)
 bb7:
@@ -14629,12 +14904,12 @@ bb7:
 	if(var25) goto bb8; else goto bb10;
 	// ^ If( _25 : 8, 10)
 bb8:
-	var27 = arg0.lo;	// _27 = Cast(a0 as u64)
-	var28 = arg1.lo;	// _28 = Cast(a1 as u64)
+	var27 = (uint64_t )arg0;	// _27 = Cast(a0 as u64)
+	var28 = (uint64_t )arg1;	// _28 = Cast(a1 as u64)
 	var29 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var27, var28 );
 	// ^ Call( _29 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _27, _28, ), bb9, bb5)
-	var30.lo = var29._0; var30.hi = var29._0 < 0 ? -1 : 0;	// _30 = Cast(_29.0 as u128)
-	var31.lo = var29._1; var31.hi = var29._1 < 0 ? -1 : 0;	// _31 = Cast(_29.1 as u128)
+	var30 = (uint128_t )var29._0;	// _30 = Cast(_29.0 as u128)
+	var31 = (uint128_t )var29._1;	// _31 = Cast(_29.1 as u128)
 	;
 	rv._0 = var30;
 	rv._1 = var31;	// retval = Tuple(_30, _31)
@@ -14646,35 +14921,35 @@ bb10:
 	if(var25) goto bb11; else goto bb15;
 	// ^ If( _25 : 11, 15)
 bb11:
-	var33 = shr128(arg0, var0);	// _33 = BinOp(a0 BIT_SHR _0)
-	var35 = var33.lo;	// _35 = Cast(_33 as u64)
-	var34 = arg1.lo;	// _34 = Cast(a1 as u32)
+	var33 = arg0 >> var0;	// _33 = BinOp(a0 BIT_SHR _0)
+	var35 = (uint64_t )var33;	// _35 = Cast(_33 as u64)
+	var34 = (uint32_t )arg1;	// _34 = Cast(a1 as u32)
 	var3 = (uint64_t )var34;	// _3 = Cast(_34 as u64)
 	var36 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var35, var3 );
 	// ^ Call( _36 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _35, _3, ), bb12, bb5)
 	var4 = var36._0;	// _4 = Use(_36.0)
-	var37 = shr128(arg0, 32);	// _37 = BinOp(a0 BIT_SHR +32 i32)
-	var38 = var37.lo;	// _38 = Cast(_37 as u32)
+	var37 = arg0 >> 32;	// _37 = BinOp(a0 BIT_SHR +32 i32)
+	var38 = (uint32_t )var37;	// _38 = Cast(_37 as u32)
 	var39 = (uint64_t )var38;	// _39 = Cast(_38 as u64)
 	var40 = var36._1 << 32;	// _40 = BinOp(_36.1 BIT_SHL +32 i32)
 	var41 = var39 | var40;	// _41 = BinOp(_39 BIT_OR _40)
 	var42 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var41, var3 );
 	// ^ Call( _42 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _41, _3, ), bb13, bb5)
 	var5 = var42._0;	// _5 = Use(_42.0)
-	var43 = arg0.lo;	// _43 = Cast(a0 as u32)
+	var43 = (uint32_t )arg0;	// _43 = Cast(a0 as u32)
 	var44 = (uint64_t )var43;	// _44 = Cast(_43 as u64)
 	var45 = var42._1 << 32;	// _45 = BinOp(_42.1 BIT_SHL +32 i32)
 	var46 = var44 | var45;	// _46 = BinOp(_44 BIT_OR _45)
 	var47 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var46, var3 );
 	// ^ Call( _47 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _46, _3, ), bb14, bb5)
-	var49.lo = var47._0; var49.hi = var47._0 < 0 ? -1 : 0;	// _49 = Cast(_47.0 as u128)
-	var51.lo = var5; var51.hi = var5 < 0 ? -1 : 0;	// _51 = Cast(_5 as u128)
-	var50 = shl128(var51, 32);	// _50 = BinOp(_51 BIT_SHL +32 i32)
-	var48 = or128(var49, var50);	// _48 = BinOp(_49 BIT_OR _50)
-	var53.lo = var4; var53.hi = var4 < 0 ? -1 : 0;	// _53 = Cast(_4 as u128)
-	var52 = shl128(var53, var0);	// _52 = BinOp(_53 BIT_SHL _0)
-	var54 = or128(var48, var52);	// _54 = BinOp(_48 BIT_OR _52)
-	var55.lo = var47._1; var55.hi = var47._1 < 0 ? -1 : 0;	// _55 = Cast(_47.1 as u128)
+	var49 = (uint128_t )var47._0;	// _49 = Cast(_47.0 as u128)
+	var51 = (uint128_t )var5;	// _51 = Cast(_5 as u128)
+	var50 = var51 << 32;	// _50 = BinOp(_51 BIT_SHL +32 i32)
+	var48 = var49 | var50;	// _48 = BinOp(_49 BIT_OR _50)
+	var53 = (uint128_t )var4;	// _53 = Cast(_4 as u128)
+	var52 = var53 << var0;	// _52 = BinOp(_53 BIT_SHL _0)
+	var54 = var48 | var52;	// _54 = BinOp(_48 BIT_OR _52)
+	var55 = (uint128_t )var47._1;	// _55 = Cast(_47.1 as u128)
 	;
 	rv._0 = var54;
 	rv._1 = var55;	// retval = Tuple(_54, _55)
@@ -14687,100 +14962,100 @@ bb15:
 	// ^ If( _25 : 16, 20)
 bb16:
 	var7 = var0 - var2;	// _7 = BinOp(_0 SUB _2)
-	var56 = shr128(arg0, var7);	// _56 = BinOp(a0 BIT_SHR _7)
-	var58 = var56.lo;	// _58 = Cast(_56 as u64)
-	var57 = shr128(arg1, var7);	// _57 = BinOp(a1 BIT_SHR _7)
-	var59 = var57.lo;	// _59 = Cast(_57 as u64)
+	var56 = arg0 >> var7;	// _56 = BinOp(a0 BIT_SHR _7)
+	var58 = (uint64_t )var56;	// _58 = Cast(_56 as u64)
+	var57 = arg1 >> var7;	// _57 = BinOp(a1 BIT_SHR _7)
+	var59 = (uint64_t )var57;	// _59 = Cast(_57 as u64)
 	var60 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var58, var59 );
 	// ^ Call( _60 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _58, _59, ), bb17, bb5)
 	var8 = var60._0;	// _8 = Use(_60.0)
-	var110 = arg1.lo;	// _110 = Cast(a1 as u64)
-	var61 = shr128(arg1, var0);	// _61 = BinOp(a1 BIT_SHR _0)
-	var62 = var61.lo;	// _62 = Cast(_61 as u64)
-	var108.lo = var60._0; var108.hi = var60._0 < 0 ? -1 : 0;	// _108 = Cast(_60.0 as u128)
-	var109.lo = var110; var109.hi = var110 < 0 ? -1 : 0;	// _109 = Cast(_110 as u128)
-	mul128_o(var108, var109, &var105);
+	var110 = (uint64_t )arg1;	// _110 = Cast(a1 as u64)
+	var61 = arg1 >> var0;	// _61 = BinOp(a1 BIT_SHR _0)
+	var62 = (uint64_t )var61;	// _62 = Cast(_61 as u64)
+	var108 = (uint128_t )var60._0;	// _108 = Cast(_60.0 as u128)
+	var109 = (uint128_t )var110;	// _109 = Cast(_110 as u128)
+	__builtin_mul_overflow(var108, var109, &var105);
 	// ^ Call( _105 = "wrapping_mul"::<u128,>( _108, _109, ), bb18, bb5)
-	var9 = var105.lo;	// _9 = Cast(_105 as u64)
-	var106 = shr128(var105, 64);	// _106 = BinOp(_105 BIT_SHR +64 i32)
-	var107 = var106.lo;	// _107 = Cast(_106 as u64)
+	var9 = (uint64_t )var105;	// _9 = Cast(_105 as u64)
+	var106 = var105 >> 64;	// _106 = BinOp(_105 BIT_SHR +64 i32)
+	var107 = (uint64_t )var106;	// _107 = Cast(_106 as u64)
 	var63 = ZRG4cR27compiler_builtins0_1_45_H923int19specialized_div_remB_016carrying_mul_add0g( var8, var62, var107 );
 	// ^ Call( _63 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::#0::carrying_mul_add( _8, _62, _107, ), bb19, bb5)
-	var64.lo = var9; var64.hi = var9 < 0 ? -1 : 0;	// _64 = Cast(_9 as u128)
-	var66.lo = var63._0; var66.hi = var63._0 < 0 ? -1 : 0;	// _66 = Cast(_63.0 as u128)
-	var65 = shl128(var66, var0);	// _65 = BinOp(_66 BIT_SHL _0)
-	var10 = or128(var64, var65);	// _10 = BinOp(_64 BIT_OR _65)
+	var64 = (uint128_t )var9;	// _64 = Cast(_9 as u128)
+	var66 = (uint128_t )var63._0;	// _66 = Cast(_63.0 as u128)
+	var65 = var66 << var0;	// _65 = BinOp(_66 BIT_SHL _0)
+	var10 = var64 | var65;	// _10 = BinOp(_64 BIT_OR _65)
 	var25 = var63._1 != 0x0ull;	// _25 = BinOp(_63.1 NE 0x0 u64)
 	if(var25) goto bb41; else goto bb40;
 	// ^ If( _25 : 41, 40)
 bb20:
 	var11 = arg0;	// _11 = Use(a0)
-	var12 = make128_raw(0ull, 0ull);	// _12 = Constant(0x0 u128)
+	var12 = (uint128_t)0x0ull;	// _12 = Constant(0x0 u128)
 	var71 = var0 + 0x20;	// _71 = BinOp(_0 ADD 0x20 u32)
 	var13 = var71 - var1;	// _13 = BinOp(_71 SUB _1)
-	var72 = shr128(arg1, var13);	// _72 = BinOp(a1 BIT_SHR _13)
-	var14 = var72.lo;	// _14 = Cast(_72 as u32)
+	var72 = arg1 >> var13;	// _72 = BinOp(a1 BIT_SHR _13)
+	var14 = (uint32_t )var72;	// _14 = Cast(_72 as u32)
 	var73 = (uint64_t )var14;	// _73 = Cast(_14 as u64)
 	var15 = var73 + 0x1ull;	// _15 = BinOp(_73 ADD 0x1 u64)
 	// ^ Goto(21)
 bb21:
 	var16 = var0 - var2;	// _16 = BinOp(_0 SUB _2)
-	var74 = shr128(var11, var16);	// _74 = BinOp(_11 BIT_SHR _16)
-	var17 = var74.lo;	// _17 = Cast(_74 as u64)
+	var74 = var11 >> var16;	// _74 = BinOp(_11 BIT_SHR _16)
+	var17 = (uint64_t )var74;	// _17 = Cast(_74 as u64)
 	var25 = var13 <= var16;	// _25 = BinOp(_13 LE _16)
 	if(var25) goto bb22; else goto bb26;
 	// ^ If( _25 : 22, 26)
 bb22:
 	var75 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var17, var15 );
 	// ^ Call( _75 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _17, _15, ), bb23, bb5)
-	var18.lo = var75._0; var18.hi = var75._0 < 0 ? -1 : 0;	// _18 = Cast(_75.0 as u128)
+	var18 = (uint128_t )var75._0;	// _18 = Cast(_75.0 as u128)
 	var19 = var16 - var13;	// _19 = BinOp(_16 SUB _13)
-	var76 = shl128(var18, var19);	// _76 = BinOp(_18 BIT_SHL _19)
-	var12 = add128(var12, var76);	// _12 = BinOp(_12 ADD _76)
-	mul128_o(arg1, var18, &var78);
+	var76 = var18 << var19;	// _76 = BinOp(_18 BIT_SHL _19)
+	var12 = var12 + var76;	// _12 = BinOp(_12 ADD _76)
+	__builtin_mul_overflow(arg1, var18, &var78);
 	// ^ Call( _78 = "wrapping_mul"::<u128,>( a1, _18, ), bb24, bb5)
-	var77 = shl128(var78, var19);	// _77 = BinOp(_78 BIT_SHL _19)
-	var11 = sub128(var11, var77);	// _11 = BinOp(_11 SUB _77)
+	var77 = var78 << var19;	// _77 = BinOp(_78 BIT_SHL _19)
+	var11 = var11 - var77;	// _11 = BinOp(_11 SUB _77)
 	var113 = (intrinsic_ctlz_u128(var11));	// ^ Call( _113 = "ctlz"::<u128,>( _11, ), bb25, bb5)
-	var2 = var113.lo;	// _2 = Cast(_113 as u32)
+	var2 = (uint32_t )var113;	// _2 = Cast(_113 as u32)
 	var25 = var1 <= var2;	// _25 = BinOp(_1 LE _2)
 	if(var25) goto bb34; else goto bb35;
 	// ^ If( _25 : 34, 35)
 bb26:
 	var20 = var0 - var2;	// _20 = BinOp(_0 SUB _2)
-	var79 = shr128(var11, var20);	// _79 = BinOp(_11 BIT_SHR _20)
-	var81 = var79.lo;	// _81 = Cast(_79 as u64)
-	var80 = shr128(arg1, var20);	// _80 = BinOp(a1 BIT_SHR _20)
-	var82 = var80.lo;	// _82 = Cast(_80 as u64)
+	var79 = var11 >> var20;	// _79 = BinOp(_11 BIT_SHR _20)
+	var81 = (uint64_t )var79;	// _81 = Cast(_79 as u64)
+	var80 = arg1 >> var20;	// _80 = BinOp(a1 BIT_SHR _20)
+	var82 = (uint64_t )var80;	// _82 = Cast(_80 as u64)
 	var83 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var81, var82 );
 	// ^ Call( _83 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _81, _82, ), bb27, bb5)
 	var21 = var83._0;	// _21 = Use(_83.0)
-	var119 = arg1.lo;	// _119 = Cast(a1 as u64)
-	var84 = shr128(arg1, var0);	// _84 = BinOp(a1 BIT_SHR _0)
-	var85 = var84.lo;	// _85 = Cast(_84 as u64)
-	var117.lo = var83._0; var117.hi = var83._0 < 0 ? -1 : 0;	// _117 = Cast(_83.0 as u128)
-	var118.lo = var119; var118.hi = var119 < 0 ? -1 : 0;	// _118 = Cast(_119 as u128)
-	mul128_o(var117, var118, &var114);
+	var119 = (uint64_t )arg1;	// _119 = Cast(a1 as u64)
+	var84 = arg1 >> var0;	// _84 = BinOp(a1 BIT_SHR _0)
+	var85 = (uint64_t )var84;	// _85 = Cast(_84 as u64)
+	var117 = (uint128_t )var83._0;	// _117 = Cast(_83.0 as u128)
+	var118 = (uint128_t )var119;	// _118 = Cast(_119 as u128)
+	__builtin_mul_overflow(var117, var118, &var114);
 	// ^ Call( _114 = "wrapping_mul"::<u128,>( _117, _118, ), bb28, bb5)
-	var22 = var114.lo;	// _22 = Cast(_114 as u64)
-	var115 = shr128(var114, 64);	// _115 = BinOp(_114 BIT_SHR +64 i32)
-	var116 = var115.lo;	// _116 = Cast(_115 as u64)
+	var22 = (uint64_t )var114;	// _22 = Cast(_114 as u64)
+	var115 = var114 >> 64;	// _115 = BinOp(_114 BIT_SHR +64 i32)
+	var116 = (uint64_t )var115;	// _116 = Cast(_115 as u64)
 	var86 = ZRG4cR27compiler_builtins0_1_45_H923int19specialized_div_remB_016carrying_mul_add0g( var21, var85, var116 );
 	// ^ Call( _86 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::#0::carrying_mul_add( _21, _85, _116, ), bb29, bb5)
-	var87.lo = var22; var87.hi = var22 < 0 ? -1 : 0;	// _87 = Cast(_22 as u128)
-	var89.lo = var86._0; var89.hi = var86._0 < 0 ? -1 : 0;	// _89 = Cast(_86.0 as u128)
-	var88 = shl128(var89, var0);	// _88 = BinOp(_89 BIT_SHL _0)
-	var23 = or128(var87, var88);	// _23 = BinOp(_87 BIT_OR _88)
-	var25 = 0 < cmp128(var23, var11);	// _25 = BinOp(_11 LT _23)
+	var87 = (uint128_t )var22;	// _87 = Cast(_22 as u128)
+	var89 = (uint128_t )var86._0;	// _89 = Cast(_86.0 as u128)
+	var88 = var89 << var0;	// _88 = BinOp(_89 BIT_SHL _0)
+	var23 = var87 | var88;	// _23 = BinOp(_87 BIT_OR _88)
+	var25 = var11 < var23;	// _25 = BinOp(_11 LT _23)
 	if(var25) goto bb30; else goto bb33;
 	// ^ If( _25 : 30, 33)
 bb30:
 	var90 = var21 - 0x1ull;	// _90 = BinOp(_21 SUB 0x1 u64)
-	var91.lo = var90; var91.hi = var90 < 0 ? -1 : 0;	// _91 = Cast(_90 as u128)
-	var92 = add128(var12, var91);	// _92 = BinOp(_12 ADD _91)
-	add128_o(var11, arg1, &var121);
+	var91 = (uint128_t )var90;	// _91 = Cast(_90 as u128)
+	var92 = var12 + var91;	// _92 = BinOp(_12 ADD _91)
+	__builtin_add_overflow(var11, arg1, &var121);
 	// ^ Call( _121 = "wrapping_add"::<u128,>( _11, a1, ), bb31, bb5)
-	sub128_o(var121, var23, &var120);
+	__builtin_sub_overflow(var121, var23, &var120);
 	// ^ Call( _120 = "wrapping_sub"::<u128,>( _121, _23, ), bb32, bb5)
 	;
 	rv._0 = var92;
@@ -14788,16 +15063,16 @@ bb30:
 	return rv;
 	// ^ Return
 bb33:
-	var93.lo = var21; var93.hi = var21 < 0 ? -1 : 0;	// _93 = Cast(_21 as u128)
-	var94 = add128(var12, var93);	// _94 = BinOp(_12 ADD _93)
-	var95 = sub128(var11, var23);	// _95 = BinOp(_11 SUB _23)
+	var93 = (uint128_t )var21;	// _93 = Cast(_21 as u128)
+	var94 = var12 + var93;	// _94 = BinOp(_12 ADD _93)
+	var95 = var11 - var23;	// _95 = BinOp(_11 SUB _23)
 	;
 	rv._0 = var94;
 	rv._1 = var95;	// retval = Tuple(_94, _95)
 	return rv;
 	// ^ Return
 bb34:
-	var25 = 0 <= cmp128(var11, arg1);	// _25 = BinOp(a1 LE _11)
+	var25 = arg1 <= var11;	// _25 = BinOp(a1 LE _11)
 	if(var25) goto bb38; else goto bb39;
 	// ^ If( _25 : 38, 39)
 bb35:
@@ -14805,21 +15080,21 @@ bb35:
 	if(var25) goto bb36; else goto bb21;
 	// ^ If( _25 : 36, 21)
 bb36:
-	var98 = var11.lo;	// _98 = Cast(_11 as u64)
-	var99 = arg1.lo;	// _99 = Cast(a1 as u64)
+	var98 = (uint64_t )var11;	// _98 = Cast(_11 as u64)
+	var99 = (uint64_t )arg1;	// _99 = Cast(a1 as u64)
 	var24 = ZRG3cR27compiler_builtins0_1_45_H923int19specialized_div_rem18u64_by_u64_div_rem0g( var98, var99 );
 	// ^ Call( _24 = ::"compiler_builtins-0_1_45_H92"::int::specialized_div_rem::u64_by_u64_div_rem( _98, _99, ), bb37, bb5)
-	var100.lo = var24._0; var100.hi = var24._0 < 0 ? -1 : 0;	// _100 = Cast(_24.0 as u128)
-	var101 = add128(var12, var100);	// _101 = BinOp(_12 ADD _100)
-	var102.lo = var24._1; var102.hi = var24._1 < 0 ? -1 : 0;	// _102 = Cast(_24.1 as u128)
+	var100 = (uint128_t )var24._0;	// _100 = Cast(_24.0 as u128)
+	var101 = var12 + var100;	// _101 = BinOp(_12 ADD _100)
+	var102 = (uint128_t )var24._1;	// _102 = Cast(_24.1 as u128)
 	;
 	rv._0 = var101;
 	rv._1 = var102;	// retval = Tuple(_101, _102)
 	return rv;
 	// ^ Return
 bb38:
-	var96 = add128(var12, make128_raw(0ull, 1ull));	// _96 = BinOp(_12 ADD 0x1 u128)
-	var97 = sub128(var11, arg1);	// _97 = BinOp(_11 SUB a1)
+	var96 = var12 + (uint128_t)0x1ull;	// _96 = BinOp(_12 ADD 0x1 u128)
+	var97 = var11 - arg1;	// _97 = BinOp(_11 SUB a1)
 	;
 	rv._0 = var96;
 	rv._1 = var97;	// retval = Tuple(_96, _97)
@@ -14832,15 +15107,15 @@ bb39:
 	return rv;
 	// ^ Return
 bb40:
-	var25 = 0 < cmp128(var10, arg0);	// _25 = BinOp(a0 LT _10)
+	var25 = arg0 < var10;	// _25 = BinOp(a0 LT _10)
 	if(var25) goto bb41; else goto bb44;
 	// ^ If( _25 : 41, 44)
 bb41:
 	var67 = var8 - 0x1ull;	// _67 = BinOp(_8 SUB 0x1 u64)
-	var68.lo = var67; var68.hi = var67 < 0 ? -1 : 0;	// _68 = Cast(_67 as u128)
-	add128_o(arg0, arg1, &var112);
+	var68 = (uint128_t )var67;	// _68 = Cast(_67 as u128)
+	__builtin_add_overflow(arg0, arg1, &var112);
 	// ^ Call( _112 = "wrapping_add"::<u128,>( a0, a1, ), bb42, bb5)
-	sub128_o(var112, var10, &var111);
+	__builtin_sub_overflow(var112, var10, &var111);
 	// ^ Call( _111 = "wrapping_sub"::<u128,>( _112, _10, ), bb43, bb5)
 	;
 	rv._0 = var68;
@@ -14848,23 +15123,23 @@ bb41:
 	return rv;
 	// ^ Return
 bb44:
-	var69.lo = var8; var69.hi = var8 < 0 ? -1 : 0;	// _69 = Cast(_8 as u128)
-	var70 = sub128(arg0, var10);	// _70 = BinOp(a0 SUB _10)
+	var69 = (uint128_t )var8;	// _69 = Cast(_8 as u128)
+	var70 = arg0 - var10;	// _70 = BinOp(a0 SUB _10)
 	;
 	rv._0 = var69;
 	rv._1 = var70;	// retval = Tuple(_69, _70)
 	return rv;
 	// ^ Return
 bb45:
-	var26 = sub128(arg0, arg1);	// _26 = BinOp(a0 SUB a1)
+	var26 = arg0 - arg1;	// _26 = BinOp(a0 SUB a1)
 	;
-	rv._0 = make128_raw(0ull, 1ull);
+	rv._0 = (uint128_t)0x1ull;
 	rv._1 = var26;	// retval = Tuple(0x1 u128, _26)
 	return rv;
 	// ^ Return
 bb46:
 	;
-	rv._0 = make128_raw(0ull, 0ull);
+	rv._0 = (uint128_t)0x0ull;
 	rv._1 = arg0;	// retval = Tuple(0x0 u128, a0)
 	return rv;
 	// ^ Return
@@ -17471,7 +17746,7 @@ static TUP_2_ZRTCj_ZRTCw  ZRICj15overflowing_neg0g(
 	RUST_BOOL var0;	// bool
 	RUST_BOOL var1;	// bool
 	int128_t var2;	// i128
-	var1 = 0 == cmp128s(make128s_raw(9223372036854775808ull, 0ull), arg0);	// _1 = BinOp(a0 EQ --170141183460469231731687303715884105728 i128)
+	var1 = arg0 == (int128_t)( ((uint128_t)9223372036854775808ull << 64) | (uint128_t)0ull);	// _1 = BinOp(a0 EQ --170141183460469231731687303715884105728 i128)
 	var0= (var1);
 	// ^ Call( _0 = "unlikely"::( _1, ), bb1, bb2)
 	if(var0) goto bb3; else goto bb4;
@@ -17479,12 +17754,12 @@ static TUP_2_ZRTCj_ZRTCw  ZRICj15overflowing_neg0g(
 bb2: _Unwind_Resume(); // Diverge
 bb3:
 	;
-	rv._0 = make128s_raw(9223372036854775808ull, 0ull);
+	rv._0 = (int128_t)( ((uint128_t)9223372036854775808ull << 64) | (uint128_t)0ull);
 	rv._1 = true;	// retval = Tuple(--170141183460469231731687303715884105728 i128, true)
 	return rv;
 	// ^ Return
 bb4:
-	var2 = neg128s(arg0);	// _2 = UniOp(a0 NEG)
+	var2 = -arg0;	// _2 = UniOp(a0 NEG)
 	;
 	rv._0 = var2;
 	rv._1 = false;	// retval = Tuple(_2, false)
@@ -17500,7 +17775,7 @@ static int128_t  ZRICj12wrapping_abs0g(
 	int128_t rv;
 	RUST_BOOL var0;	// bool
 	TUP_2_ZRTCj_ZRTCw var1;	// (i128, bool, )
-	var0 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg0);	// _0 = BinOp(a0 LT +0 i128)
+	var0 = arg0 < (int128_t)0ll;	// _0 = BinOp(a0 LT +0 i128)
 	if(var0) goto bb1; else goto bb3;
 	// ^ If( _0 : 1, 3)
 bb1:
@@ -17688,7 +17963,7 @@ uint128_t  ZRQCu2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -17699,7 +17974,7 @@ int128_t  ZRQCu2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -18056,7 +18331,7 @@ uint128_t  ZRQCv2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -18067,7 +18342,7 @@ int128_t  ZRQCv2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -18429,7 +18704,7 @@ uint128_t  ZRQCa2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -18440,7 +18715,7 @@ int128_t  ZRQCa2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -18895,7 +19170,7 @@ uint128_t  ZRQCb2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -18906,7 +19181,7 @@ int128_t  ZRQCb2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -19337,7 +19612,7 @@ uint128_t  ZRQCc2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -19348,7 +19623,7 @@ int128_t  ZRQCc2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -19864,7 +20139,7 @@ uint128_t  ZRQCd2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -19875,7 +20150,7 @@ int128_t  ZRQCd2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -20455,7 +20730,7 @@ uint128_t  ZRQCe2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -20466,7 +20741,7 @@ int128_t  ZRQCe2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -21488,7 +21763,7 @@ uint128_t  ZRQCf2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -21499,7 +21774,7 @@ int128_t  ZRQCf2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -22178,7 +22453,7 @@ uint128_t  ZRQCg2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -22189,7 +22464,7 @@ int128_t  ZRQCg2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -22261,7 +22536,7 @@ uint128_t  ZRQCg2cR27compiler_builtins0_1_45_H923int4HInt0g5widen0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -22273,8 +22548,8 @@ uint128_t  ZRQCg2cR27compiler_builtins0_1_45_H923int4HInt0g8widen_hi0g(
 {
 	uint128_t rv;
 	uint128_t var0;	// u128
-	var0.lo = arg0; var0.hi = arg0 < 0 ? -1 : 0;	// _0 = Cast(a0 as u128)
-	rv = shl128(var0, 0x40);	// retval = BinOp(_0 BIT_SHL 0x40 u32)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	rv = var0 << 0x40;	// retval = BinOp(_0 BIT_SHL 0x40 u32)
 	return rv;
 	// ^ Return
 }
@@ -22288,9 +22563,9 @@ uint128_t  ZRQCg2cR27compiler_builtins0_1_45_H923int4HInt0g9widen_mul0g(
 	uint128_t rv;
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
-	var0.lo = arg0; var0.hi = arg0 < 0 ? -1 : 0;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1; var1.hi = arg1 < 0 ? -1 : 0;	// _1 = Cast(a1 as u128)
-	mul128_o(var0, var1, &rv);
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
+	__builtin_mul_overflow(var0, var1, &rv);
 	// ^ Call( retval = "wrapping_mul"::<u128,>( _0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -22303,7 +22578,7 @@ uint128_t  ZRQCg2cR27compiler_builtins0_1_45_H923int4HInt0g10zero_widen0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -22317,9 +22592,9 @@ uint128_t  ZRQCg2cR27compiler_builtins0_1_45_H923int4HInt0g14zero_widen_mul0g(
 	uint128_t rv;
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
-	var0.lo = arg0; var0.hi = arg0 < 0 ? -1 : 0;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1; var1.hi = arg1 < 0 ? -1 : 0;	// _1 = Cast(a1 as u128)
-	mul128_o(var0, var1, &rv);
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
+	__builtin_mul_overflow(var0, var1, &rv);
 	// ^ Call( retval = "wrapping_mul"::<u128,>( _0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -23330,7 +23605,7 @@ uint128_t  ZRQCh2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -23341,7 +23616,7 @@ int128_t  ZRQCh2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -23415,7 +23690,7 @@ int128_t  ZRQCh2cR27compiler_builtins0_1_45_H923int4HInt0g5widen0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -23427,8 +23702,8 @@ int128_t  ZRQCh2cR27compiler_builtins0_1_45_H923int4HInt0g8widen_hi0g(
 {
 	int128_t rv;
 	int128_t var0;	// i128
-	var0.lo = arg0; var0.hi = arg0 < 0 ? -1 : 0;	// _0 = Cast(a0 as i128)
-	rv = shl128s(var0, 0x40);	// retval = BinOp(_0 BIT_SHL 0x40 u32)
+	var0 = (int128_t )arg0;	// _0 = Cast(a0 as i128)
+	rv = var0 << 0x40;	// retval = BinOp(_0 BIT_SHL 0x40 u32)
 	return rv;
 	// ^ Return
 }
@@ -23442,9 +23717,9 @@ int128_t  ZRQCh2cR27compiler_builtins0_1_45_H923int4HInt0g9widen_mul0g(
 	int128_t rv;
 	int128_t var0;	// i128
 	int128_t var1;	// i128
-	var0.lo = arg0; var0.hi = arg0 < 0 ? -1 : 0;	// _0 = Cast(a0 as i128)
-	var1.lo = arg1; var1.hi = arg1 < 0 ? -1 : 0;	// _1 = Cast(a1 as i128)
-	mul128s_o(var0, var1, &rv);
+	var0 = (int128_t )arg0;	// _0 = Cast(a0 as i128)
+	var1 = (int128_t )arg1;	// _1 = Cast(a1 as i128)
+	__builtin_mul_overflow(var0, var1, &rv);
 	// ^ Call( retval = "wrapping_mul"::<i128,>( _0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -23459,7 +23734,7 @@ int128_t  ZRQCh2cR27compiler_builtins0_1_45_H923int4HInt0g10zero_widen0g(
 	int128_t rv;
 	uint64_t var0;	// u64
 	var0 = (uint64_t )arg0;	// _0 = Cast(a0 as u64)
-	rv.lo = var0; rv.hi = var0 < 0 ? -1 : 0;	// retval = Cast(_0 as i128)
+	rv = (int128_t )var0;	// retval = Cast(_0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -23476,10 +23751,10 @@ int128_t  ZRQCh2cR27compiler_builtins0_1_45_H923int4HInt0g14zero_widen_mul0g(
 	int128_t var2;	// i128
 	int128_t var3;	// i128
 	var0 = (uint64_t )arg0;	// _0 = Cast(a0 as u64)
-	var2.lo = var0; var2.hi = var0 < 0 ? -1 : 0;	// _2 = Cast(_0 as i128)
+	var2 = (int128_t )var0;	// _2 = Cast(_0 as i128)
 	var1 = (uint64_t )arg1;	// _1 = Cast(a1 as u64)
-	var3.lo = var1; var3.hi = var1 < 0 ? -1 : 0;	// _3 = Cast(_1 as i128)
-	mul128s_o(var2, var3, &rv);
+	var3 = (int128_t )var1;	// _3 = Cast(_1 as i128)
+	__builtin_mul_overflow(var2, var3, &rv);
 	// ^ Call( retval = "wrapping_mul"::<i128,>( _2, _3, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -23914,7 +24189,7 @@ uintptr_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCu4cast0g(
 
 {
 	uintptr_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as usize)
+	rv = (uintptr_t )arg0;	// retval = Cast(a0 as usize)
 	return rv;
 	// ^ Return
 }
@@ -23925,7 +24200,7 @@ intptr_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCv4cast0g(
 
 {
 	intptr_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as isize)
+	rv = (intptr_t )arg0;	// retval = Cast(a0 as isize)
 	return rv;
 	// ^ Return
 }
@@ -23936,7 +24211,7 @@ uint8_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCa4cast0g(
 
 {
 	uint8_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u8)
+	rv = (uint8_t )arg0;	// retval = Cast(a0 as u8)
 	return rv;
 	// ^ Return
 }
@@ -23947,7 +24222,7 @@ int8_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCb4cast0g(
 
 {
 	int8_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i8)
+	rv = (int8_t )arg0;	// retval = Cast(a0 as i8)
 	return rv;
 	// ^ Return
 }
@@ -23958,7 +24233,7 @@ uint16_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCc4cast0g(
 
 {
 	uint16_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u16)
+	rv = (uint16_t )arg0;	// retval = Cast(a0 as u16)
 	return rv;
 	// ^ Return
 }
@@ -23969,7 +24244,7 @@ int16_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCd4cast0g(
 
 {
 	int16_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i16)
+	rv = (int16_t )arg0;	// retval = Cast(a0 as i16)
 	return rv;
 	// ^ Return
 }
@@ -23980,7 +24255,7 @@ uint32_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCe4cast0g(
 
 {
 	uint32_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u32)
+	rv = (uint32_t )arg0;	// retval = Cast(a0 as u32)
 	return rv;
 	// ^ Return
 }
@@ -23991,7 +24266,7 @@ int32_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCf4cast0g(
 
 {
 	int32_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i32)
+	rv = (int32_t )arg0;	// retval = Cast(a0 as i32)
 	return rv;
 	// ^ Return
 }
@@ -24002,7 +24277,7 @@ uint64_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCg4cast0g(
 
 {
 	uint64_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u64)
+	rv = (uint64_t )arg0;	// retval = Cast(a0 as u64)
 	return rv;
 	// ^ Return
 }
@@ -24013,7 +24288,7 @@ int64_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCh4cast0g(
 
 {
 	int64_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i64)
+	rv = (int64_t )arg0;	// retval = Cast(a0 as i64)
 	return rv;
 	// ^ Return
 }
@@ -24035,7 +24310,7 @@ int128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int8CastInto1gCj4cast0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0.lo; rv.hi = arg0.hi;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -24050,10 +24325,10 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int4DInt0g10from_lo_hi0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var0.lo = arg0; var0.hi = arg0 < 0 ? -1 : 0;	// _0 = Cast(a0 as u128)
-	var2.lo = arg1; var2.hi = arg1 < 0 ? -1 : 0;	// _2 = Cast(a1 as u128)
-	var1 = shl128(var2, 0x40);	// _1 = BinOp(_2 BIT_SHL 0x40 u32)
-	rv = or128(var0, var1);	// retval = BinOp(_0 BIT_OR _1)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var2 = (uint128_t )arg1;	// _2 = Cast(a1 as u128)
+	var1 = var2 << 0x40;	// _1 = BinOp(_2 BIT_SHL 0x40 u32)
+	rv = var0 | var1;	// retval = BinOp(_0 BIT_OR _1)
 	return rv;
 	// ^ Return
 }
@@ -24065,8 +24340,8 @@ uint64_t  ZRQCi2cR27compiler_builtins0_1_45_H923int4DInt0g2hi0g(
 {
 	uint64_t rv;
 	uint128_t var0;	// u128
-	var0 = shr128(arg0, 0x40);	// _0 = BinOp(a0 BIT_SHR 0x40 u32)
-	rv = var0.lo;	// retval = Cast(_0 as u64)
+	var0 = arg0 >> 0x40;	// _0 = BinOp(a0 BIT_SHR 0x40 u32)
+	rv = (uint64_t )var0;	// retval = Cast(_0 as u64)
 	return rv;
 	// ^ Return
 }
@@ -24077,7 +24352,7 @@ uint64_t  ZRQCi2cR27compiler_builtins0_1_45_H923int4DInt0g2lo0g(
 
 {
 	uint64_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u64)
+	rv = (uint64_t )arg0;	// retval = Cast(a0 as u64)
 	return rv;
 	// ^ Return
 }
@@ -24091,9 +24366,9 @@ TUP_2_ZRTCg_ZRTCg  ZRQCi2cR27compiler_builtins0_1_45_H923int4DInt0g5lo_hi0g(
 	uint64_t var0;	// u64
 	uint64_t var1;	// u64
 	uint128_t var2;	// u128
-	var0 = arg0.lo;	// _0 = Cast(a0 as u64)
-	var2 = shr128(arg0, 0x40);	// _2 = BinOp(a0 BIT_SHR 0x40 u32)
-	var1 = var2.lo;	// _1 = Cast(_2 as u64)
+	var0 = (uint64_t )arg0;	// _0 = Cast(a0 as u64)
+	var2 = arg0 >> 0x40;	// _2 = BinOp(a0 BIT_SHR 0x40 u32)
+	var1 = (uint64_t )var2;	// _1 = Cast(_2 as u64)
 	;
 	rv._0 = var0;
 	rv._1 = var1;	// retval = Tuple(_0, _1)
@@ -24109,15 +24384,15 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g(
 {
 	uint128_t rv;
 	RUST_BOOL var0;	// bool
-	var0 = 0 < cmp128(arg1, arg0);	// _0 = BinOp(a0 LT a1)
+	var0 = arg0 < arg1;	// _0 = BinOp(a0 LT a1)
 	if(var0) goto bb1; else goto bb2;
 	// ^ If( _0 : 1, 2)
 bb1:
-	sub128_o(arg1, arg0, &rv);
+	__builtin_sub_overflow(arg1, arg0, &rv);
 	goto bb3;
 	// ^ Call( retval = "wrapping_sub"::<u128,>( a1, a0, ), bb3, bb4)
 bb2:
-	sub128_o(arg0, arg1, &rv);
+	__builtin_sub_overflow(arg0, arg1, &rv);
 	// ^ Call( retval = "wrapping_sub"::<u128,>( a0, a1, ), bb3, bb4)
 bb3:
 	return rv;
@@ -24131,7 +24406,7 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g9from_bool0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -24153,7 +24428,7 @@ RUST_BOOL  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g7is_zero0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 == cmp128(make128_raw(0ull, 0ull), arg0);	// retval = BinOp(a0 EQ 0x0 u128)
+	rv = arg0 == (uint128_t)0x0ull;	// retval = BinOp(a0 EQ 0x0 u128)
 	return rv;
 	// ^ Return
 }
@@ -24166,7 +24441,7 @@ uint32_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g13leading_zeros0g(
 	uint32_t rv;
 	uint128_t var0;	// u128
 	var0 = (intrinsic_ctlz_u128(arg0));	// ^ Call( _0 = "ctlz"::<u128,>( a0, ), bb1, bb2)
-	rv = var0.lo;	// retval = Cast(_0 as u32)
+	rv = (uint32_t )var0;	// retval = Cast(_0 as u32)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -24182,8 +24457,8 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g11logical_shr0g(
 	uint32_t var0;	// u32
 	uint128_t var1;	// u128
 	var0 = arg1 & 0x7f;	// _0 = BinOp(a1 BIT_AND 0x7f u32)
-	var1.lo = var0; var1.hi = var0 < 0 ? -1 : 0;	// _1 = Cast(_0 as u128)
-	rv = shr128(arg0, var1.lo);
+	var1 = (uint128_t )var0;	// _1 = Cast(_0 as u128)
+	rv = arg0 >> var1;
 	// ^ Call( retval = "unchecked_shr"::<u128,>( a0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24198,7 +24473,7 @@ TUP_2_ZRTCi_ZRTCw  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g15overflowing_
 {
 	TUP_2_ZRTCi_ZRTCw rv;
 	TUP_2_ZRTCi_ZRTCw var0;	// (u128, bool, )
-	var0._1 = add128_o(arg0, arg1, &var0._0);
+	var0._1 = __builtin_add_overflow(arg0, arg1, &var0._0);
 	// ^ Call( _0 = "add_with_overflow"::<u128,>( a0, a1, ), bb1, bb2)
 	;
 	rv._0 = var0._0;
@@ -24216,8 +24491,8 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g11rotate_left0g(
 {
 	uint128_t rv;
 	uint128_t var0;	// u128
-	var0.lo = arg1; var0.hi = arg1 < 0 ? -1 : 0;	// _0 = Cast(a1 as u128)
-	{ uint128_t v = arg0; unsigned shift = var0.lo; if(shift < 64) { rv.lo = (v.lo << shift) | (v.hi >> (64 - shift)); rv.hi = (v.hi << shift) | (v.lo >> (64 - shift)); } else { shift -= 64; rv.lo = (v.hi << shift) | (v.lo >> (64 - shift)); rv.hi = (v.lo << shift) | (v.hi >> (64 - shift)); }};
+	var0 = (uint128_t )arg1;	// _0 = Cast(a1 as u128)
+	{ uint128_t v = arg0; unsigned shift = var0; rv = (v << shift) | (v >> (128 - shift));};
 	// ^ Call( retval = "rotate_left"::<u128,>( a0, _0, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24242,7 +24517,7 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_add0g(
 
 {
 	uint128_t rv;
-	add128_o(arg0, arg1, &rv);
+	__builtin_add_overflow(arg0, arg1, &rv);
 	// ^ Call( retval = "wrapping_add"::<u128,>( a0, a1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24256,7 +24531,7 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_mul0g(
 
 {
 	uint128_t rv;
-	mul128_o(arg0, arg1, &rv);
+	__builtin_mul_overflow(arg0, arg1, &rv);
 	// ^ Call( retval = "wrapping_mul"::<u128,>( a0, a1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24270,8 +24545,8 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_neg0g(
 {
 	uint128_t rv;
 	uint128_t var0;	// u128
-	var0.lo = ~arg0.lo; var0.hi = ~arg0.hi;	// _0 = UniOp(a0 INV)
-	add128_o(var0, make128_raw(0ull, 1ull), &rv);
+	var0 = ~arg0;	// _0 = UniOp(a0 INV)
+	__builtin_add_overflow(var0, (uint128_t)0x1ull, &rv);
 	// ^ Call( retval = "wrapping_add"::<u128,>( _0, 0x1 u128, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24288,8 +24563,8 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_shl0g(
 	uint32_t var0;	// u32
 	uint128_t var1;	// u128
 	var0 = arg1 & 0x7f;	// _0 = BinOp(a1 BIT_AND 0x7f u32)
-	var1.lo = var0; var1.hi = var0 < 0 ? -1 : 0;	// _1 = Cast(_0 as u128)
-	rv = shl128(arg0, var1.lo);
+	var1 = (uint128_t )var0;	// _1 = Cast(_0 as u128)
+	rv = arg0 << var1;
 	// ^ Call( retval = "unchecked_shl"::<u128,>( a0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24306,8 +24581,8 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_shr0g(
 	uint32_t var0;	// u32
 	uint128_t var1;	// u128
 	var0 = arg1 & 0x7f;	// _0 = BinOp(a1 BIT_AND 0x7f u32)
-	var1.lo = var0; var1.hi = var0 < 0 ? -1 : 0;	// _1 = Cast(_0 as u128)
-	rv = shr128(arg0, var1.lo);
+	var1 = (uint128_t )var0;	// _1 = Cast(_0 as u128)
+	rv = arg0 >> var1;
 	// ^ Call( retval = "unchecked_shr"::<u128,>( a0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24321,7 +24596,7 @@ uint128_t  ZRQCi2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_sub0g(
 
 {
 	uint128_t rv;
-	sub128_o(arg0, arg1, &rv);
+	__builtin_sub_overflow(arg0, arg1, &rv);
 	// ^ Call( retval = "wrapping_sub"::<u128,>( a0, a1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -24369,8 +24644,8 @@ TUP_2_ZRTCi_ZRTCw  ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub4Addo0g4addo0
 	RUST_BOOL var3;	// bool
 	var0 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( arg0, arg1 );
 	// ^ Call( _0 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( a0, a1, ), bb1, bb2)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), arg1);	// _1 = BinOp(a1 LT 0x0 u128)
-	var2 = 0 < cmp128(arg0, var0);	// _2 = BinOp(_0 LT a0)
+	var1 = arg1 < (uint128_t)0x0ull;	// _1 = BinOp(a1 LT 0x0 u128)
+	var2 = var0 < arg0;	// _2 = BinOp(_0 LT a0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -24393,8 +24668,8 @@ TUP_2_ZRTCi_ZRTCw  ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub4Subo0g4subo0
 	RUST_BOOL var3;	// bool
 	var0 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( arg0, arg1 );
 	// ^ Call( _0 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( a0, a1, ), bb1, bb2)
-	var1 = 0 < cmp128(make128_raw(0ull, 0ull), arg1);	// _1 = BinOp(a1 LT 0x0 u128)
-	var2 = 0 < cmp128(var0, arg0);	// _2 = BinOp(a0 LT _0)
+	var1 = arg1 < (uint128_t)0x0ull;	// _1 = BinOp(a1 LT 0x0 u128)
+	var2 = arg0 < var0;	// _2 = BinOp(a0 LT _0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -24426,16 +24701,16 @@ uint128_t  ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g(
 	uint128_t var12;	// u128
 	uint128_t var13;	// u128
 	uint64_t var14;	// u64
-	var5 = arg0.lo;	// _5 = Cast(a0 as u64)
-	var6 = arg1.lo;	// _6 = Cast(a1 as u64)
+	var5 = (uint64_t )arg0;	// _5 = Cast(a0 as u64)
+	var6 = (uint64_t )arg1;	// _6 = Cast(a1 as u64)
 	var4._1 = __builtin_add_overflow(var5, var6, &var4._0);
 	// ^ Call( _4 = "add_with_overflow"::<u64,>( _5, _6, ), bb1, bb3)
 	var2 = var4._1;	// _2 = Use(_4.1)
 	var0 = var4._0;	// _0 = Use(_4.0)
-	var7 = shr128(arg0, 0x40);	// _7 = BinOp(a0 BIT_SHR 0x40 u32)
-	var9 = var7.lo;	// _9 = Cast(_7 as u64)
-	var8 = shr128(arg1, 0x40);	// _8 = BinOp(a1 BIT_SHR 0x40 u32)
-	var10 = var8.lo;	// _10 = Cast(_8 as u64)
+	var7 = arg0 >> 0x40;	// _7 = BinOp(a0 BIT_SHR 0x40 u32)
+	var9 = (uint64_t )var7;	// _9 = Cast(_7 as u64)
+	var8 = arg1 >> 0x40;	// _8 = BinOp(a1 BIT_SHR 0x40 u32)
+	var10 = (uint64_t )var8;	// _10 = Cast(_8 as u64)
 	__builtin_add_overflow(var9, var10, &var1);
 	// ^ Call( _1 = "wrapping_add"::<u64,>( _9, _10, ), bb2, bb3)
 	if(var2) goto bb4; else goto bb5;
@@ -24451,10 +24726,10 @@ bb5:
 bb6:
 	__builtin_add_overflow(var1, var3, &var14);
 	// ^ Call( _14 = "wrapping_add"::<u64,>( _1, _3, ), bb7, bb3)
-	var11.lo = var0; var11.hi = var0 < 0 ? -1 : 0;	// _11 = Cast(_0 as u128)
-	var13.lo = var14; var13.hi = var14 < 0 ? -1 : 0;	// _13 = Cast(_14 as u128)
-	var12 = shl128(var13, 0x40);	// _12 = BinOp(_13 BIT_SHL 0x40 u32)
-	rv = or128(var11, var12);	// retval = BinOp(_11 BIT_OR _12)
+	var11 = (uint128_t )var0;	// _11 = Cast(_0 as u128)
+	var13 = (uint128_t )var14;	// _13 = Cast(_14 as u128)
+	var12 = var13 << 0x40;	// _12 = BinOp(_13 BIT_SHL 0x40 u32)
+	rv = var11 | var12;	// retval = BinOp(_11 BIT_OR _12)
 	return rv;
 	// ^ Return
 }
@@ -24475,7 +24750,7 @@ uint128_t  ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g8uadd_one0g
 	uint128_t var7;	// u128
 	uint128_t var8;	// u128
 	uint64_t var9;	// u64
-	var3 = arg0.lo;	// _3 = Cast(a0 as u64)
+	var3 = (uint64_t )arg0;	// _3 = Cast(a0 as u64)
 	var2._1 = __builtin_add_overflow(var3, 0x1ull, &var2._0);
 	// ^ Call( _2 = "add_with_overflow"::<u64,>( _3, 0x1 u64, ), bb1, bb2)
 	var0 = var2._0;	// _0 = Use(_2.0)
@@ -24490,14 +24765,14 @@ bb4:
 	var1 = 0x0ull;	// _1 = Constant(0x0 u64)
 	// ^ Goto(5)
 bb5:
-	var4 = shr128(arg0, 0x40);	// _4 = BinOp(a0 BIT_SHR 0x40 u32)
-	var5 = var4.lo;	// _5 = Cast(_4 as u64)
+	var4 = arg0 >> 0x40;	// _4 = BinOp(a0 BIT_SHR 0x40 u32)
+	var5 = (uint64_t )var4;	// _5 = Cast(_4 as u64)
 	__builtin_add_overflow(var5, var1, &var9);
 	// ^ Call( _9 = "wrapping_add"::<u64,>( _5, _1, ), bb6, bb2)
-	var6.lo = var0; var6.hi = var0 < 0 ? -1 : 0;	// _6 = Cast(_0 as u128)
-	var8.lo = var9; var8.hi = var9 < 0 ? -1 : 0;	// _8 = Cast(_9 as u128)
-	var7 = shl128(var8, 0x40);	// _7 = BinOp(_8 BIT_SHL 0x40 u32)
-	rv = or128(var6, var7);	// retval = BinOp(_6 BIT_OR _7)
+	var6 = (uint128_t )var0;	// _6 = Cast(_0 as u128)
+	var8 = (uint128_t )var9;	// _8 = Cast(_9 as u128)
+	var7 = var8 << 0x40;	// _7 = BinOp(_8 BIT_SHL 0x40 u32)
+	rv = var6 | var7;	// retval = BinOp(_6 BIT_OR _7)
 	return rv;
 	// ^ Return
 }
@@ -24511,7 +24786,7 @@ uint128_t  ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g(
 	uint128_t rv;
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
-	var1.lo = ~arg1.lo; var1.hi = ~arg1.hi;	// _1 = UniOp(a1 INV)
+	var1 = ~arg1;	// _1 = UniOp(a1 INV)
 	var0 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g8uadd_one0g( var1 );
 	// ^ Call( _0 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd_one( _1, ), bb1, bb3)
 	rv = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( arg0, var0 );
@@ -24580,11 +24855,11 @@ TUP_2_ZRTCi_ZRTCw  ZRQCi3cR27compiler_builtins0_1_45_H923int3mul5UMulo0g4mulo0g(
 	uint128_t var49;	// u128
 	uint128_t var50;	// u128
 	uint64_t var51;	// u64
-	var10 = shr128(arg0, 0x40);	// _10 = BinOp(a0 BIT_SHR 0x40 u32)
-	var11 = var10.lo;	// _11 = Cast(_10 as u64)
+	var10 = arg0 >> 0x40;	// _10 = BinOp(a0 BIT_SHR 0x40 u32)
+	var11 = (uint64_t )var10;	// _11 = Cast(_10 as u64)
 	var2 = var11 == 0x0ull;	// _2 = BinOp(_11 EQ 0x0 u64)
-	var12 = shr128(arg1, 0x40);	// _12 = BinOp(a1 BIT_SHR 0x40 u32)
-	var13 = var12.lo;	// _13 = Cast(_12 as u64)
+	var12 = arg1 >> 0x40;	// _12 = BinOp(a1 BIT_SHR 0x40 u32)
+	var13 = (uint64_t )var12;	// _13 = Cast(_12 as u64)
 	var9 = var13 == 0x0ull;	// _9 = BinOp(_13 EQ 0x0 u64)
 	if(var2) goto bb1; else goto bb2;
 	// ^ If( _2 : 1, 2)
@@ -24595,29 +24870,29 @@ bb2:
 	if(var9) goto bb3; else goto bb7;
 	// ^ If( _9 : 3, 7)
 bb3:
-	var16 = arg1.lo;	// _16 = Cast(a1 as u64)
-	var17 = arg0.lo;	// _17 = Cast(a0 as u64)
-	var14.lo = var16; var14.hi = var16 < 0 ? -1 : 0;	// _14 = Cast(_16 as u128)
-	var15.lo = var17; var15.hi = var17 < 0 ? -1 : 0;	// _15 = Cast(_17 as u128)
-	mul128_o(var14, var15, &var26);
+	var16 = (uint64_t )arg1;	// _16 = Cast(a1 as u64)
+	var17 = (uint64_t )arg0;	// _17 = Cast(a0 as u64)
+	var14 = (uint128_t )var16;	// _14 = Cast(_16 as u128)
+	var15 = (uint128_t )var17;	// _15 = Cast(_17 as u128)
+	__builtin_mul_overflow(var14, var15, &var26);
 	// ^ Call( _26 = "wrapping_mul"::<u128,>( _14, _15, ), bb4, bb9)
-	var21 = arg1.lo;	// _21 = Cast(a1 as u64)
-	var18 = shr128(arg0, 0x40);	// _18 = BinOp(a0 BIT_SHR 0x40 u32)
-	var22 = var18.lo;	// _22 = Cast(_18 as u64)
-	var19.lo = var21; var19.hi = var21 < 0 ? -1 : 0;	// _19 = Cast(_21 as u128)
-	var20.lo = var22; var20.hi = var22 < 0 ? -1 : 0;	// _20 = Cast(_22 as u128)
-	mul128_o(var19, var20, &var1);
+	var21 = (uint64_t )arg1;	// _21 = Cast(a1 as u64)
+	var18 = arg0 >> 0x40;	// _18 = BinOp(a0 BIT_SHR 0x40 u32)
+	var22 = (uint64_t )var18;	// _22 = Cast(_18 as u64)
+	var19 = (uint128_t )var21;	// _19 = Cast(_21 as u128)
+	var20 = (uint128_t )var22;	// _20 = Cast(_22 as u128)
+	__builtin_mul_overflow(var19, var20, &var1);
 	// ^ Call( _1 = "wrapping_mul"::<u128,>( _19, _20, ), bb5, bb9)
-	var24 = var1.lo;	// _24 = Cast(_1 as u64)
-	var23.lo = var24; var23.hi = var24 < 0 ? -1 : 0;	// _23 = Cast(_24 as u128)
-	var27 = shl128(var23, 0x40);	// _27 = BinOp(_23 BIT_SHL 0x40 u32)
-	var25._1 = add128_o(var26, var27, &var25._0);
+	var24 = (uint64_t )var1;	// _24 = Cast(_1 as u64)
+	var23 = (uint128_t )var24;	// _23 = Cast(_24 as u128)
+	var27 = var23 << 0x40;	// _27 = BinOp(_23 BIT_SHL 0x40 u32)
+	var25._1 = __builtin_add_overflow(var26, var27, &var25._0);
 	// ^ Call( _25 = "add_with_overflow"::<u128,>( _26, _27, ), bb6, bb9)
 	var6 = var25._0;	// _6 = Use(_25.0)
 	if(var25._1) goto bb10; else goto bb11;
 	// ^ If( _25.1 : 10, 11)
 bb7:
-	mul128_o(arg0, arg1, &var28);
+	__builtin_mul_overflow(arg0, arg1, &var28);
 	// ^ Call( _28 = "wrapping_mul"::<u128,>( a0, a1, ), bb8, bb9)
 	;
 	rv._0 = var28;
@@ -24630,8 +24905,8 @@ bb10:
 	goto bb12;
 	// ^ Goto(12)
 bb11:
-	var29 = shr128(var1, 0x40);	// _29 = BinOp(_1 BIT_SHR 0x40 u32)
-	var30 = var29.lo;	// _30 = Cast(_29 as u64)
+	var29 = var1 >> 0x40;	// _29 = BinOp(_1 BIT_SHR 0x40 u32)
+	var30 = (uint64_t )var29;	// _30 = Cast(_29 as u64)
 	var8 = var30 == 0x0ull;	// _8 = BinOp(_30 EQ 0x0 u64)
 	var7 = !var8;	// _7 = UniOp(_8 INV)
 	// ^ Goto(12)
@@ -24642,11 +24917,11 @@ bb12:
 	return rv;
 	// ^ Return
 bb13:
-	var34 = arg0.lo;	// _34 = Cast(a0 as u64)
-	var35 = arg1.lo;	// _35 = Cast(a1 as u64)
-	var32.lo = var34; var32.hi = var34 < 0 ? -1 : 0;	// _32 = Cast(_34 as u128)
-	var33.lo = var35; var33.hi = var35 < 0 ? -1 : 0;	// _33 = Cast(_35 as u128)
-	mul128_o(var32, var33, &var31);
+	var34 = (uint64_t )arg0;	// _34 = Cast(a0 as u64)
+	var35 = (uint64_t )arg1;	// _35 = Cast(a1 as u64)
+	var32 = (uint128_t )var34;	// _32 = Cast(_34 as u128)
+	var33 = (uint128_t )var35;	// _33 = Cast(_35 as u128)
+	__builtin_mul_overflow(var32, var33, &var31);
 	// ^ Call( _31 = "wrapping_mul"::<u128,>( _32, _33, ), bb14, bb9)
 	;
 	rv._0 = var31;
@@ -24654,23 +24929,23 @@ bb13:
 	return rv;
 	// ^ Return
 bb15:
-	var38 = arg0.lo;	// _38 = Cast(a0 as u64)
-	var39 = arg1.lo;	// _39 = Cast(a1 as u64)
-	var36.lo = var38; var36.hi = var38 < 0 ? -1 : 0;	// _36 = Cast(_38 as u128)
-	var37.lo = var39; var37.hi = var39 < 0 ? -1 : 0;	// _37 = Cast(_39 as u128)
-	mul128_o(var36, var37, &var48);
+	var38 = (uint64_t )arg0;	// _38 = Cast(a0 as u64)
+	var39 = (uint64_t )arg1;	// _39 = Cast(a1 as u64)
+	var36 = (uint128_t )var38;	// _36 = Cast(_38 as u128)
+	var37 = (uint128_t )var39;	// _37 = Cast(_39 as u128)
+	__builtin_mul_overflow(var36, var37, &var48);
 	// ^ Call( _48 = "wrapping_mul"::<u128,>( _36, _37, ), bb16, bb9)
-	var43 = arg0.lo;	// _43 = Cast(a0 as u64)
-	var40 = shr128(arg1, 0x40);	// _40 = BinOp(a1 BIT_SHR 0x40 u32)
-	var44 = var40.lo;	// _44 = Cast(_40 as u64)
-	var41.lo = var43; var41.hi = var43 < 0 ? -1 : 0;	// _41 = Cast(_43 as u128)
-	var42.lo = var44; var42.hi = var44 < 0 ? -1 : 0;	// _42 = Cast(_44 as u128)
-	mul128_o(var41, var42, &var0);
+	var43 = (uint64_t )arg0;	// _43 = Cast(a0 as u64)
+	var40 = arg1 >> 0x40;	// _40 = BinOp(a1 BIT_SHR 0x40 u32)
+	var44 = (uint64_t )var40;	// _44 = Cast(_40 as u64)
+	var41 = (uint128_t )var43;	// _41 = Cast(_43 as u128)
+	var42 = (uint128_t )var44;	// _42 = Cast(_44 as u128)
+	__builtin_mul_overflow(var41, var42, &var0);
 	// ^ Call( _0 = "wrapping_mul"::<u128,>( _41, _42, ), bb17, bb9)
-	var46 = var0.lo;	// _46 = Cast(_0 as u64)
-	var45.lo = var46; var45.hi = var46 < 0 ? -1 : 0;	// _45 = Cast(_46 as u128)
-	var49 = shl128(var45, 0x40);	// _49 = BinOp(_45 BIT_SHL 0x40 u32)
-	var47._1 = add128_o(var48, var49, &var47._0);
+	var46 = (uint64_t )var0;	// _46 = Cast(_0 as u64)
+	var45 = (uint128_t )var46;	// _45 = Cast(_46 as u128)
+	var49 = var45 << 0x40;	// _49 = BinOp(_45 BIT_SHL 0x40 u32)
+	var47._1 = __builtin_add_overflow(var48, var49, &var47._0);
 	// ^ Call( _47 = "add_with_overflow"::<u128,>( _48, _49, ), bb18, bb9)
 	var3 = var47._0;	// _3 = Use(_47.0)
 	if(var47._1) goto bb19; else goto bb20;
@@ -24680,8 +24955,8 @@ bb19:
 	goto bb21;
 	// ^ Goto(21)
 bb20:
-	var50 = shr128(var0, 0x40);	// _50 = BinOp(_0 BIT_SHR 0x40 u32)
-	var51 = var50.lo;	// _51 = Cast(_50 as u64)
+	var50 = var0 >> 0x40;	// _50 = BinOp(_0 BIT_SHR 0x40 u32)
+	var51 = (uint64_t )var50;	// _51 = Cast(_50 as u64)
 	var5 = var51 == 0x0ull;	// _5 = BinOp(_51 EQ 0x0 u64)
 	var4 = !var5;	// _4 = UniOp(_5 INV)
 	// ^ Goto(21)
@@ -24727,11 +25002,11 @@ uint128_t  ZRQCi3cR27compiler_builtins0_1_45_H923int5shift4Ashl0g4ashl0g(
 	if(var1) goto bb1; else goto bb2;
 	// ^ If( _1 : 1, 2)
 bb1:
-	var3 = arg0.lo;	// _3 = Cast(a0 as u64)
+	var3 = (uint64_t )arg0;	// _3 = Cast(a0 as u64)
 	var4 = arg1 - var0;	// _4 = BinOp(a1 SUB _0)
 	var6 = var3 << var4;	// _6 = BinOp(_3 BIT_SHL _4)
-	var5.lo = var6; var5.hi = var6 < 0 ? -1 : 0;	// _5 = Cast(_6 as u128)
-	rv = shl128(var5, 0x40);	// retval = BinOp(_5 BIT_SHL 0x40 u32)
+	var5 = (uint128_t )var6;	// _5 = Cast(_6 as u128)
+	rv = var5 << 0x40;	// retval = BinOp(_5 BIT_SHL 0x40 u32)
 	return rv;
 	// ^ Return
 bb2:
@@ -24743,22 +25018,22 @@ bb3:
 	return rv;
 	// ^ Return
 bb4:
-	var7 = arg0.lo;	// _7 = Cast(a0 as u64)
+	var7 = (uint64_t )arg0;	// _7 = Cast(a0 as u64)
 	var19 = var7 << arg1;	// _19 = BinOp(_7 BIT_SHL a1)
-	var10 = arg0.lo;	// _10 = Cast(a0 as u64)
+	var10 = (uint64_t )arg0;	// _10 = Cast(a0 as u64)
 	var11 = var0 - arg1;	// _11 = BinOp(_0 SUB a1)
 	var8 = var11 & 0x3f;	// _8 = BinOp(_11 BIT_AND 0x3f u32)
 	var9 = (uint64_t )var8;	// _9 = Cast(_8 as u64)
 	var14 = var10 >> var9;
 	// ^ Call( _14 = "unchecked_shr"::<u64,>( _10, _9, ), bb5, bb6)
-	var12 = shr128(arg0, 0x40);	// _12 = BinOp(a0 BIT_SHR 0x40 u32)
-	var13 = var12.lo;	// _13 = Cast(_12 as u64)
+	var12 = arg0 >> 0x40;	// _12 = BinOp(a0 BIT_SHR 0x40 u32)
+	var13 = (uint64_t )var12;	// _13 = Cast(_12 as u64)
 	var15 = var13 << arg1;	// _15 = BinOp(_13 BIT_SHL a1)
 	var20 = var14 | var15;	// _20 = BinOp(_14 BIT_OR _15)
-	var16.lo = var19; var16.hi = var19 < 0 ? -1 : 0;	// _16 = Cast(_19 as u128)
-	var18.lo = var20; var18.hi = var20 < 0 ? -1 : 0;	// _18 = Cast(_20 as u128)
-	var17 = shl128(var18, 0x40);	// _17 = BinOp(_18 BIT_SHL 0x40 u32)
-	rv = or128(var16, var17);	// retval = BinOp(_16 BIT_OR _17)
+	var16 = (uint128_t )var19;	// _16 = Cast(_19 as u128)
+	var18 = (uint128_t )var20;	// _18 = Cast(_20 as u128)
+	var17 = var18 << 0x40;	// _17 = BinOp(_18 BIT_SHL 0x40 u32)
+	rv = var16 | var17;	// retval = BinOp(_16 BIT_OR _17)
 	return rv;
 	// ^ Return
 bb6: _Unwind_Resume(); // Diverge
@@ -24803,14 +25078,14 @@ uint128_t  ZRQCi3cR27compiler_builtins0_1_45_H923int5shift4Lshr0g4lshr0g(
 	if(var1) goto bb1; else goto bb3;
 	// ^ If( _1 : 1, 3)
 bb1:
-	var3 = shr128(arg0, 0x40);	// _3 = BinOp(a0 BIT_SHR 0x40 u32)
-	var6 = var3.lo;	// _6 = Cast(_3 as u64)
+	var3 = arg0 >> 0x40;	// _3 = BinOp(a0 BIT_SHR 0x40 u32)
+	var6 = (uint64_t )var3;	// _6 = Cast(_3 as u64)
 	var7 = arg1 - var0;	// _7 = BinOp(a1 SUB _0)
 	var4 = var7 & 0x3f;	// _4 = BinOp(_7 BIT_AND 0x3f u32)
 	var5 = (uint64_t )var4;	// _5 = Cast(_4 as u64)
 	var8 = var6 >> var5;
 	// ^ Call( _8 = "unchecked_shr"::<u64,>( _6, _5, ), bb2, bb8)
-	rv.lo = var8; rv.hi = var8 < 0 ? -1 : 0;	// retval = Cast(_8 as u128)
+	rv = (uint128_t )var8;	// retval = Cast(_8 as u128)
 	return rv;
 	// ^ Return
 bb3:
@@ -24822,26 +25097,26 @@ bb4:
 	return rv;
 	// ^ Return
 bb5:
-	var11 = arg0.lo;	// _11 = Cast(a0 as u64)
+	var11 = (uint64_t )arg0;	// _11 = Cast(a0 as u64)
 	var9 = arg1 & 0x3f;	// _9 = BinOp(a1 BIT_AND 0x3f u32)
 	var10 = (uint64_t )var9;	// _10 = Cast(_9 as u64)
 	var15 = var11 >> var10;
 	// ^ Call( _15 = "unchecked_shr"::<u64,>( _11, _10, ), bb6, bb8)
-	var12 = shr128(arg0, 0x40);	// _12 = BinOp(a0 BIT_SHR 0x40 u32)
-	var13 = var12.lo;	// _13 = Cast(_12 as u64)
+	var12 = arg0 >> 0x40;	// _12 = BinOp(a0 BIT_SHR 0x40 u32)
+	var13 = (uint64_t )var12;	// _13 = Cast(_12 as u64)
 	var14 = var0 - arg1;	// _14 = BinOp(_0 SUB a1)
 	var16 = var13 << var14;	// _16 = BinOp(_13 BIT_SHL _14)
 	var24 = var15 | var16;	// _24 = BinOp(_15 BIT_OR _16)
-	var17 = shr128(arg0, 0x40);	// _17 = BinOp(a0 BIT_SHR 0x40 u32)
-	var20 = var17.lo;	// _20 = Cast(_17 as u64)
+	var17 = arg0 >> 0x40;	// _17 = BinOp(a0 BIT_SHR 0x40 u32)
+	var20 = (uint64_t )var17;	// _20 = Cast(_17 as u64)
 	var18 = arg1 & 0x3f;	// _18 = BinOp(a1 BIT_AND 0x3f u32)
 	var19 = (uint64_t )var18;	// _19 = Cast(_18 as u64)
 	var25 = var20 >> var19;
 	// ^ Call( _25 = "unchecked_shr"::<u64,>( _20, _19, ), bb7, bb8)
-	var21.lo = var24; var21.hi = var24 < 0 ? -1 : 0;	// _21 = Cast(_24 as u128)
-	var23.lo = var25; var23.hi = var25 < 0 ? -1 : 0;	// _23 = Cast(_25 as u128)
-	var22 = shl128(var23, 0x40);	// _22 = BinOp(_23 BIT_SHL 0x40 u32)
-	rv = or128(var21, var22);	// retval = BinOp(_21 BIT_OR _22)
+	var21 = (uint128_t )var24;	// _21 = Cast(_24 as u128)
+	var23 = (uint128_t )var25;	// _23 = Cast(_25 as u128)
+	var22 = var23 << 0x40;	// _22 = BinOp(_23 BIT_SHL 0x40 u32)
+	rv = var21 | var22;	// retval = BinOp(_21 BIT_OR _22)
 	return rv;
 	// ^ Return
 bb8: _Unwind_Resume(); // Diverge
@@ -24854,7 +25129,7 @@ static RUST_BOOL  ZRQCi2cE9core0_0_03cmp9PartialEq1gCi2eq0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 == cmp128((*arg1), (*arg0));	// retval = BinOp(a0* EQ a1*)
+	rv = (*arg0) == (*arg1);	// retval = BinOp(a0* EQ a1*)
 	return rv;
 	// ^ Return
 }
@@ -24866,7 +25141,7 @@ static RUST_BOOL  ZRQCi2cE9core0_0_03cmp9PartialEq1gCi2ne0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 != cmp128((*arg1), (*arg0));	// retval = BinOp(a0* NE a1*)
+	rv = (*arg0) != (*arg1);	// retval = BinOp(a0* NE a1*)
 	return rv;
 	// ^ Return
 }
@@ -24878,7 +25153,7 @@ static RUST_BOOL  ZRQCi2cE9core0_0_03cmp10PartialOrd1gCi2lt0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 < cmp128((*arg1), (*arg0));	// retval = BinOp(a0* LT a1*)
+	rv = (*arg0) < (*arg1);	// retval = BinOp(a0* LT a1*)
 	return rv;
 	// ^ Return
 }
@@ -24890,7 +25165,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops5arith3Add1gCi3add0g(
 
 {
 	uint128_t rv;
-	rv = add128(arg0, arg1);	// retval = BinOp(a0 ADD a1)
+	rv = arg0 + arg1;	// retval = BinOp(a0 ADD a1)
 	return rv;
 	// ^ Return
 }
@@ -24902,7 +25177,7 @@ static void  ZRQCi3cE9core0_0_03ops5arith9AddAssign1gCi10add_assign0g(
 
 {
 	tUNIT rv;
-	(*arg0) = add128((*arg0), arg1);	// a0* = BinOp(a0* ADD a1)
+	(*arg0) = (*arg0) + arg1;	// a0* = BinOp(a0* ADD a1)
 	/* ZST assign */
 	// ^ drop(a0)
 	return ;
@@ -24916,7 +25191,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops3bit6BitAnd1gCi6bitand0g(
 
 {
 	uint128_t rv;
-	rv = and128(arg0, arg1);	// retval = BinOp(a0 BIT_AND a1)
+	rv = arg0 & arg1;	// retval = BinOp(a0 BIT_AND a1)
 	return rv;
 	// ^ Return
 }
@@ -24928,7 +25203,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops3bit5BitOr1gCi5bitor0g(
 
 {
 	uint128_t rv;
-	rv = or128(arg0, arg1);	// retval = BinOp(a0 BIT_OR a1)
+	rv = arg0 | arg1;	// retval = BinOp(a0 BIT_OR a1)
 	return rv;
 	// ^ Return
 }
@@ -24940,7 +25215,7 @@ static void  ZRQCi3cE9core0_0_03ops3bit11BitOrAssign1gCi12bitor_assign0g(
 
 {
 	tUNIT rv;
-	(*arg0) = or128((*arg0), arg1);	// a0* = BinOp(a0* BIT_OR a1)
+	(*arg0) = (*arg0) | arg1;	// a0* = BinOp(a0* BIT_OR a1)
 	/* ZST assign */
 	// ^ drop(a0)
 	return ;
@@ -24953,7 +25228,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops3bit3Not0g3not0g(
 
 {
 	uint128_t rv;
-	rv.lo = ~arg0.lo; rv.hi = ~arg0.hi;	// retval = UniOp(a0 INV)
+	rv = ~arg0;	// retval = UniOp(a0 INV)
 	return rv;
 	// ^ Return
 }
@@ -24965,7 +25240,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops3bit3Shl1gCe3shl0g(
 
 {
 	uint128_t rv;
-	rv = shl128(arg0, arg1);	// retval = BinOp(a0 BIT_SHL a1)
+	rv = arg0 << arg1;	// retval = BinOp(a0 BIT_SHL a1)
 	return rv;
 	// ^ Return
 }
@@ -24977,7 +25252,7 @@ static uint128_t  ZRQCi3cE9core0_0_03ops3bit3Shr1gCe3shr0g(
 
 {
 	uint128_t rv;
-	rv = shr128(arg0, arg1);	// retval = BinOp(a0 BIT_SHR a1)
+	rv = arg0 >> arg1;	// retval = BinOp(a0 BIT_SHR a1)
 	return rv;
 	// ^ Return
 }
@@ -24989,7 +25264,7 @@ static void  ZRQCi3cE9core0_0_03ops3bit9ShrAssign1gCe10shr_assign0g(
 
 {
 	tUNIT rv;
-	(*arg0) = shr128((*arg0), arg1);	// a0* = BinOp(a0* BIT_SHR a1)
+	(*arg0) = (*arg0) >> arg1;	// a0* = BinOp(a0* BIT_SHR a1)
 	/* ZST assign */
 	// ^ drop(a0)
 	return ;
@@ -25002,7 +25277,7 @@ uintptr_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCu4cast0g(
 
 {
 	uintptr_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as usize)
+	rv = (uintptr_t )arg0;	// retval = Cast(a0 as usize)
 	return rv;
 	// ^ Return
 }
@@ -25013,7 +25288,7 @@ intptr_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCv4cast0g(
 
 {
 	intptr_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as isize)
+	rv = (intptr_t )arg0;	// retval = Cast(a0 as isize)
 	return rv;
 	// ^ Return
 }
@@ -25024,7 +25299,7 @@ uint8_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCa4cast0g(
 
 {
 	uint8_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u8)
+	rv = (uint8_t )arg0;	// retval = Cast(a0 as u8)
 	return rv;
 	// ^ Return
 }
@@ -25035,7 +25310,7 @@ int8_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCb4cast0g(
 
 {
 	int8_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i8)
+	rv = (int8_t )arg0;	// retval = Cast(a0 as i8)
 	return rv;
 	// ^ Return
 }
@@ -25046,7 +25321,7 @@ uint16_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCc4cast0g(
 
 {
 	uint16_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u16)
+	rv = (uint16_t )arg0;	// retval = Cast(a0 as u16)
 	return rv;
 	// ^ Return
 }
@@ -25057,7 +25332,7 @@ int16_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCd4cast0g(
 
 {
 	int16_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i16)
+	rv = (int16_t )arg0;	// retval = Cast(a0 as i16)
 	return rv;
 	// ^ Return
 }
@@ -25068,7 +25343,7 @@ uint32_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCe4cast0g(
 
 {
 	uint32_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u32)
+	rv = (uint32_t )arg0;	// retval = Cast(a0 as u32)
 	return rv;
 	// ^ Return
 }
@@ -25079,7 +25354,7 @@ int32_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCf4cast0g(
 
 {
 	int32_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i32)
+	rv = (int32_t )arg0;	// retval = Cast(a0 as i32)
 	return rv;
 	// ^ Return
 }
@@ -25090,7 +25365,7 @@ uint64_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCg4cast0g(
 
 {
 	uint64_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as u64)
+	rv = (uint64_t )arg0;	// retval = Cast(a0 as u64)
 	return rv;
 	// ^ Return
 }
@@ -25101,7 +25376,7 @@ int64_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCh4cast0g(
 
 {
 	int64_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i64)
+	rv = (int64_t )arg0;	// retval = Cast(a0 as i64)
 	return rv;
 	// ^ Return
 }
@@ -25112,7 +25387,7 @@ uint128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int8CastInto1gCi4cast0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0.lo; rv.hi = arg0.hi;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -25140,10 +25415,10 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int4DInt0g10from_lo_hi0g(
 	uint64_t var2;	// u64
 	int128_t var3;	// i128
 	var2 = (uint64_t )arg0;	// _2 = Cast(a0 as u64)
-	var0.lo = var2; var0.hi = var2 < 0 ? -1 : 0;	// _0 = Cast(_2 as i128)
-	var3.lo = arg1; var3.hi = arg1 < 0 ? -1 : 0;	// _3 = Cast(a1 as i128)
-	var1 = shl128s(var3, 0x40);	// _1 = BinOp(_3 BIT_SHL 0x40 u32)
-	rv = or128s(var0, var1);	// retval = BinOp(_0 BIT_OR _1)
+	var0 = (int128_t )var2;	// _0 = Cast(_2 as i128)
+	var3 = (int128_t )arg1;	// _3 = Cast(a1 as i128)
+	var1 = var3 << 0x40;	// _1 = BinOp(_3 BIT_SHL 0x40 u32)
+	rv = var0 | var1;	// retval = BinOp(_0 BIT_OR _1)
 	return rv;
 	// ^ Return
 }
@@ -25155,8 +25430,8 @@ int64_t  ZRQCj2cR27compiler_builtins0_1_45_H923int4DInt0g2hi0g(
 {
 	int64_t rv;
 	int128_t var0;	// i128
-	var0 = shr128s(arg0, 0x40);	// _0 = BinOp(a0 BIT_SHR 0x40 u32)
-	rv = var0.lo;	// retval = Cast(_0 as i64)
+	var0 = arg0 >> 0x40;	// _0 = BinOp(a0 BIT_SHR 0x40 u32)
+	rv = (int64_t )var0;	// retval = Cast(_0 as i64)
 	return rv;
 	// ^ Return
 }
@@ -25167,7 +25442,7 @@ int64_t  ZRQCj2cR27compiler_builtins0_1_45_H923int4DInt0g2lo0g(
 
 {
 	int64_t rv;
-	rv = arg0.lo;	// retval = Cast(a0 as i64)
+	rv = (int64_t )arg0;	// retval = Cast(a0 as i64)
 	return rv;
 	// ^ Return
 }
@@ -25181,9 +25456,9 @@ TUP_2_ZRTCh_ZRTCh  ZRQCj2cR27compiler_builtins0_1_45_H923int4DInt0g5lo_hi0g(
 	int64_t var0;	// i64
 	int64_t var1;	// i64
 	int128_t var2;	// i128
-	var0 = arg0.lo;	// _0 = Cast(a0 as i64)
-	var2 = shr128s(arg0, 0x40);	// _2 = BinOp(a0 BIT_SHR 0x40 u32)
-	var1 = var2.lo;	// _1 = Cast(_2 as i64)
+	var0 = (int64_t )arg0;	// _0 = Cast(a0 as i64)
+	var2 = arg0 >> 0x40;	// _2 = BinOp(a0 BIT_SHR 0x40 u32)
+	var1 = (int64_t )var2;	// _1 = Cast(_2 as i64)
 	;
 	rv._0 = var0;
 	rv._1 = var1;	// retval = Tuple(_0, _1)
@@ -25200,11 +25475,11 @@ uint128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g8abs_diff0g(
 	uint128_t rv;
 	int128_t var0;	// i128
 	int128_t var1;	// i128
-	sub128s_o(arg0, arg1, &var1);
+	__builtin_sub_overflow(arg0, arg1, &var1);
 	// ^ Call( _1 = "wrapping_sub"::<i128,>( a0, a1, ), bb1, bb3)
 	var0 = ZRICj12wrapping_abs0g( var1 );
 	// ^ Call( _0 = <i128 /*- */>::wrapping_abs( _1, ), bb2, bb3)
-	rv.lo = var0.lo; rv.hi = var0.hi;	// retval = Cast(_0 as u128)
+	rv = (uint128_t )var0;	// retval = Cast(_0 as u128)
 	return rv;
 	// ^ Return
 bb3: _Unwind_Resume(); // Diverge
@@ -25216,7 +25491,7 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g9from_bool0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0; rv.hi = arg0 < 0 ? -1 : 0;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -25227,7 +25502,7 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g13from_unsigned0g(
 
 {
 	int128_t rv;
-	rv.lo = arg0.lo; rv.hi = arg0.hi;	// retval = Cast(a0 as i128)
+	rv = (int128_t )arg0;	// retval = Cast(a0 as i128)
 	return rv;
 	// ^ Return
 }
@@ -25238,7 +25513,7 @@ RUST_BOOL  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g7is_zero0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 == cmp128s(make128s_raw(0ull, 0ull), arg0);	// retval = BinOp(a0 EQ +0 i128)
+	rv = arg0 == (int128_t)0ll;	// retval = BinOp(a0 EQ +0 i128)
 	return rv;
 	// ^ Return
 }
@@ -25251,9 +25526,9 @@ uint32_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g13leading_zeros0g(
 	uint32_t rv;
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
-	var1.lo = arg0.lo; var1.hi = arg0.hi;	// _1 = Cast(a0 as u128)
+	var1 = (uint128_t )arg0;	// _1 = Cast(a0 as u128)
 	var0 = (intrinsic_ctlz_u128(var1));	// ^ Call( _0 = "ctlz"::<u128,>( _1, ), bb1, bb2)
-	rv = var0.lo;	// retval = Cast(_0 as u32)
+	rv = (uint32_t )var0;	// retval = Cast(_0 as u32)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -25270,12 +25545,12 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g11logical_shr0g(
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
 	uint128_t var3;	// u128
-	var2.lo = arg0.lo; var2.hi = arg0.hi;	// _2 = Cast(a0 as u128)
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
 	var0 = arg1 & 0x7f;	// _0 = BinOp(a1 BIT_AND 0x7f u32)
-	var1.lo = var0; var1.hi = var0 < 0 ? -1 : 0;	// _1 = Cast(_0 as u128)
-	var3 = shr128(var2, var1.lo);
+	var1 = (uint128_t )var0;	// _1 = Cast(_0 as u128)
+	var3 = var2 >> var1;
 	// ^ Call( _3 = "unchecked_shr"::<u128,>( _2, _1, ), bb1, bb2)
-	rv.lo = var3.lo; rv.hi = var3.hi;	// retval = Cast(_3 as i128)
+	rv = (int128_t )var3;	// retval = Cast(_3 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -25289,7 +25564,7 @@ TUP_2_ZRTCj_ZRTCw  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g15overflowing_
 {
 	TUP_2_ZRTCj_ZRTCw rv;
 	TUP_2_ZRTCj_ZRTCw var0;	// (i128, bool, )
-	var0._1 = add128s_o(arg0, arg1, &var0._0);
+	var0._1 = __builtin_add_overflow(arg0, arg1, &var0._0);
 	// ^ Call( _0 = "add_with_overflow"::<i128,>( a0, a1, ), bb1, bb2)
 	;
 	rv._0 = var0._0;
@@ -25309,11 +25584,11 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g11rotate_left0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var2.lo = arg0.lo; var2.hi = arg0.hi;	// _2 = Cast(a0 as u128)
-	var1.lo = arg1; var1.hi = arg1 < 0 ? -1 : 0;	// _1 = Cast(a1 as u128)
-	{ uint128_t v = var2; unsigned shift = var1.lo; if(shift < 64) { var0.lo = (v.lo << shift) | (v.hi >> (64 - shift)); var0.hi = (v.hi << shift) | (v.lo >> (64 - shift)); } else { shift -= 64; var0.lo = (v.hi << shift) | (v.lo >> (64 - shift)); var0.hi = (v.lo << shift) | (v.hi >> (64 - shift)); }};
+	var2 = (uint128_t )arg0;	// _2 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
+	{ uint128_t v = var2; unsigned shift = var1; var0 = (v << shift) | (v >> (128 - shift));};
 	// ^ Call( _0 = "rotate_left"::<u128,>( _2, _1, ), bb1, bb2)
-	rv.lo = var0.lo; rv.hi = var0.hi;	// retval = Cast(_0 as i128)
+	rv = (int128_t )var0;	// retval = Cast(_0 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -25325,7 +25600,7 @@ uint128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g8unsigned0g(
 
 {
 	uint128_t rv;
-	rv.lo = arg0.lo; rv.hi = arg0.hi;	// retval = Cast(a0 as u128)
+	rv = (uint128_t )arg0;	// retval = Cast(a0 as u128)
 	return rv;
 	// ^ Return
 }
@@ -25337,7 +25612,7 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_add0g(
 
 {
 	int128_t rv;
-	add128s_o(arg0, arg1, &rv);
+	__builtin_add_overflow(arg0, arg1, &rv);
 	// ^ Call( retval = "wrapping_add"::<i128,>( a0, a1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -25351,7 +25626,7 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_mul0g(
 
 {
 	int128_t rv;
-	mul128s_o(arg0, arg1, &rv);
+	__builtin_mul_overflow(arg0, arg1, &rv);
 	// ^ Call( retval = "wrapping_mul"::<i128,>( a0, a1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -25383,8 +25658,8 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_shl0g(
 	uint32_t var0;	// u32
 	int128_t var1;	// i128
 	var0 = arg1 & 0x7f;	// _0 = BinOp(a1 BIT_AND 0x7f u32)
-	var1.lo = var0; var1.hi = var0 < 0 ? -1 : 0;	// _1 = Cast(_0 as i128)
-	rv = shl128s(arg0, var1.lo);
+	var1 = (int128_t )var0;	// _1 = Cast(_0 as i128)
+	rv = arg0 << var1;
 	// ^ Call( retval = "unchecked_shl"::<i128,>( a0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -25401,8 +25676,8 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_shr0g(
 	uint32_t var0;	// u32
 	int128_t var1;	// i128
 	var0 = arg1 & 0x7f;	// _0 = BinOp(a1 BIT_AND 0x7f u32)
-	var1.lo = var0; var1.hi = var0 < 0 ? -1 : 0;	// _1 = Cast(_0 as i128)
-	rv = shr128s(arg0, var1.lo);
+	var1 = (int128_t )var0;	// _1 = Cast(_0 as i128)
+	rv = arg0 >> var1;
 	// ^ Call( retval = "unchecked_shr"::<i128,>( a0, _1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -25416,7 +25691,7 @@ int128_t  ZRQCj2cR27compiler_builtins0_1_45_H923int3Int0g12wrapping_sub0g(
 
 {
 	int128_t rv;
-	sub128s_o(arg0, arg1, &rv);
+	__builtin_sub_overflow(arg0, arg1, &rv);
 	// ^ Call( retval = "wrapping_sub"::<i128,>( a0, a1, ), bb1, bb2)
 	return rv;
 	// ^ Return
@@ -25433,11 +25708,11 @@ int128_t  ZRQCj3cR27compiler_builtins0_1_45_H923int6addsub6AddSub0g3add0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var0.lo = arg0.lo; var0.hi = arg0.hi;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1.lo; var1.hi = arg1.hi;	// _1 = Cast(a1 as u128)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
 	var2 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( var0, var1 );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( _0, _1, ), bb1, bb2)
-	rv.lo = var2.lo; rv.hi = var2.hi;	// retval = Cast(_2 as i128)
+	rv = (int128_t )var2;	// retval = Cast(_2 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -25453,11 +25728,11 @@ int128_t  ZRQCj3cR27compiler_builtins0_1_45_H923int6addsub6AddSub0g3sub0g(
 	uint128_t var0;	// u128
 	uint128_t var1;	// u128
 	uint128_t var2;	// u128
-	var0.lo = arg0.lo; var0.hi = arg0.hi;	// _0 = Cast(a0 as u128)
-	var1.lo = arg1.lo; var1.hi = arg1.hi;	// _1 = Cast(a1 as u128)
+	var0 = (uint128_t )arg0;	// _0 = Cast(a0 as u128)
+	var1 = (uint128_t )arg1;	// _1 = Cast(a1 as u128)
 	var2 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( var0, var1 );
 	// ^ Call( _2 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( _0, _1, ), bb1, bb2)
-	rv.lo = var2.lo; rv.hi = var2.hi;	// retval = Cast(_2 as i128)
+	rv = (int128_t )var2;	// retval = Cast(_2 as i128)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -25477,13 +25752,13 @@ TUP_2_ZRTCj_ZRTCw  ZRQCj3cR27compiler_builtins0_1_45_H923int6addsub4Addo0g4addo0
 	uint128_t var4;	// u128
 	uint128_t var5;	// u128
 	uint128_t var6;	// u128
-	var4.lo = arg0.lo; var4.hi = arg0.hi;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1.lo; var5.hi = arg1.hi;	// _5 = Cast(a1 as u128)
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
 	var6 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4uadd0g( var4, var5 );
 	// ^ Call( _6 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::uadd( _4, _5, ), bb1, bb2)
-	var0.lo = var6.lo; var0.hi = var6.hi;	// _0 = Cast(_6 as i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg1);	// _1 = BinOp(a1 LT +0 i128)
-	var2 = 0 < cmp128s(arg0, var0);	// _2 = BinOp(_0 LT a0)
+	var0 = (int128_t )var6;	// _0 = Cast(_6 as i128)
+	var1 = arg1 < (int128_t)0ll;	// _1 = BinOp(a1 LT +0 i128)
+	var2 = var0 < arg0;	// _2 = BinOp(_0 LT a0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -25507,13 +25782,13 @@ TUP_2_ZRTCj_ZRTCw  ZRQCj3cR27compiler_builtins0_1_45_H923int6addsub4Subo0g4subo0
 	uint128_t var4;	// u128
 	uint128_t var5;	// u128
 	uint128_t var6;	// u128
-	var4.lo = arg0.lo; var4.hi = arg0.hi;	// _4 = Cast(a0 as u128)
-	var5.lo = arg1.lo; var5.hi = arg1.hi;	// _5 = Cast(a1 as u128)
+	var4 = (uint128_t )arg0;	// _4 = Cast(a0 as u128)
+	var5 = (uint128_t )arg1;	// _5 = Cast(a1 as u128)
 	var6 = ZRQCi3cR27compiler_builtins0_1_45_H923int6addsub7UAddSub0g4usub0g( var4, var5 );
 	// ^ Call( _6 = <u128 as ::"compiler_builtins-0_1_45_H92"::int::addsub::UAddSub>::usub( _4, _5, ), bb1, bb2)
-	var0.lo = var6.lo; var0.hi = var6.hi;	// _0 = Cast(_6 as i128)
-	var1 = 0 < cmp128s(make128s_raw(0ull, 0ull), arg1);	// _1 = BinOp(a1 LT +0 i128)
-	var2 = 0 < cmp128s(var0, arg0);	// _2 = BinOp(a0 LT _0)
+	var0 = (int128_t )var6;	// _0 = Cast(_6 as i128)
+	var1 = arg1 < (int128_t)0ll;	// _1 = BinOp(a1 LT +0 i128)
+	var2 = arg0 < var0;	// _2 = BinOp(a0 LT _0)
 	var3 = var1 != var2;	// _3 = BinOp(_1 NE _2)
 	;
 	rv._0 = var0;
@@ -25588,8 +25863,8 @@ int128_t  ZRQCj3cR27compiler_builtins0_1_45_H923int3mul3Mul0g_C0g(
 	int64_t var55;	// i64
 	int128_t var56;	// i128
 	int128_t var57;	// i128
-	var0 = arg0.lo;	// _0 = Cast(a0 as i64)
-	var1 = arg1.lo;	// _1 = Cast(a1 as i64)
+	var0 = (int64_t )arg0;	// _0 = Cast(a0 as i64)
+	var1 = (int64_t )arg1;	// _1 = Cast(a1 as i64)
 	var6 = (int32_t )var0;	// _6 = Cast(_0 as i32)
 	var7 = (int32_t )var1;	// _7 = Cast(_1 as i32)
 	var2 = (uint32_t )var6;	// _2 = Cast(_6 as u32)
@@ -25627,35 +25902,35 @@ int128_t  ZRQCj3cR27compiler_builtins0_1_45_H923int3mul3Mul0g_C0g(
 	__builtin_mul_overflow(var26, var27, &var35);
 	// ^ Call( _35 = "wrapping_mul"::<i64,>( _26, _27, ), bb4, bb11)
 	var32 = (uint64_t )var34;	// _32 = Cast(_34 as u64)
-	var30.lo = var32; var30.hi = var32 < 0 ? -1 : 0;	// _30 = Cast(_32 as i128)
-	var33.lo = var35; var33.hi = var35 < 0 ? -1 : 0;	// _33 = Cast(_35 as i128)
-	var31 = shl128s(var33, 0x40);	// _31 = BinOp(_33 BIT_SHL 0x40 u32)
-	var39 = or128s(var30, var31);	// _39 = BinOp(_30 BIT_OR _31)
+	var30 = (int128_t )var32;	// _30 = Cast(_32 as i128)
+	var33 = (int128_t )var35;	// _33 = Cast(_35 as i128)
+	var31 = var33 << 0x40;	// _31 = BinOp(_33 BIT_SHL 0x40 u32)
+	var39 = var30 | var31;	// _39 = BinOp(_30 BIT_OR _31)
 	var36 = (uint64_t )var37;	// _36 = Cast(_37 as u64)
-	var38.lo = var36; var38.hi = var36 < 0 ? -1 : 0;	// _38 = Cast(_36 as i128)
-	var40 = shl128s(var38, 0x20);	// _40 = BinOp(_38 BIT_SHL 0x20 u32)
-	add128s_o(var39, var40, &var44);
+	var38 = (int128_t )var36;	// _38 = Cast(_36 as i128)
+	var40 = var38 << 0x20;	// _40 = BinOp(_38 BIT_SHL 0x20 u32)
+	__builtin_add_overflow(var39, var40, &var44);
 	// ^ Call( _44 = "wrapping_add"::<i128,>( _39, _40, ), bb5, bb11)
 	var41 = (uint64_t )var42;	// _41 = Cast(_42 as u64)
-	var43.lo = var41; var43.hi = var41 < 0 ? -1 : 0;	// _43 = Cast(_41 as i128)
-	var45 = shl128s(var43, 0x20);	// _45 = BinOp(_43 BIT_SHL 0x20 u32)
-	add128s_o(var44, var45, &var50);
+	var43 = (int128_t )var41;	// _43 = Cast(_41 as i128)
+	var45 = var43 << 0x20;	// _45 = BinOp(_43 BIT_SHL 0x20 u32)
+	__builtin_add_overflow(var44, var45, &var50);
 	// ^ Call( _50 = "wrapping_add"::<i128,>( _44, _45, ), bb6, bb11)
-	var46 = shr128s(arg1, 0x40);	// _46 = BinOp(a1 BIT_SHR 0x40 u32)
-	var47 = var46.lo;	// _47 = Cast(_46 as i64)
+	var46 = arg1 >> 0x40;	// _46 = BinOp(a1 BIT_SHR 0x40 u32)
+	var47 = (int64_t )var46;	// _47 = Cast(_46 as i64)
 	__builtin_mul_overflow(var0, var47, &var49);
 	// ^ Call( _49 = "wrapping_mul"::<i64,>( _0, _47, ), bb7, bb11)
-	var48.lo = var49; var48.hi = var49 < 0 ? -1 : 0;	// _48 = Cast(_49 as i128)
-	var51 = shl128s(var48, 0x40);	// _51 = BinOp(_48 BIT_SHL 0x40 u32)
-	add128s_o(var50, var51, &var56);
+	var48 = (int128_t )var49;	// _48 = Cast(_49 as i128)
+	var51 = var48 << 0x40;	// _51 = BinOp(_48 BIT_SHL 0x40 u32)
+	__builtin_add_overflow(var50, var51, &var56);
 	// ^ Call( _56 = "wrapping_add"::<i128,>( _50, _51, ), bb8, bb11)
-	var52 = shr128s(arg0, 0x40);	// _52 = BinOp(a0 BIT_SHR 0x40 u32)
-	var53 = var52.lo;	// _53 = Cast(_52 as i64)
+	var52 = arg0 >> 0x40;	// _52 = BinOp(a0 BIT_SHR 0x40 u32)
+	var53 = (int64_t )var52;	// _53 = Cast(_52 as i64)
 	__builtin_mul_overflow(var53, var1, &var55);
 	// ^ Call( _55 = "wrapping_mul"::<i64,>( _53, _1, ), bb9, bb11)
-	var54.lo = var55; var54.hi = var55 < 0 ? -1 : 0;	// _54 = Cast(_55 as i128)
-	var57 = shl128s(var54, 0x40);	// _57 = BinOp(_54 BIT_SHL 0x40 u32)
-	add128s_o(var56, var57, &rv);
+	var54 = (int128_t )var55;	// _54 = Cast(_55 as i128)
+	var57 = var54 << 0x40;	// _57 = BinOp(_54 BIT_SHL 0x40 u32)
+	__builtin_add_overflow(var56, var57, &rv);
 	// ^ Call( retval = "wrapping_add"::<i128,>( _56, _57, ), bb10, bb11)
 	return rv;
 	// ^ Return
@@ -25708,19 +25983,19 @@ int128_t  ZRQCj3cR27compiler_builtins0_1_45_H923int5shift4Ashr0g4ashr0g(
 	if(var1) goto bb1; else goto bb2;
 	// ^ If( _1 : 1, 2)
 bb1:
-	var3 = shr128s(arg0, 0x40);	// _3 = BinOp(a0 BIT_SHR 0x40 u32)
-	var4 = var3.lo;	// _4 = Cast(_3 as i64)
+	var3 = arg0 >> 0x40;	// _3 = BinOp(a0 BIT_SHR 0x40 u32)
+	var4 = (int64_t )var3;	// _4 = Cast(_3 as i64)
 	var5 = arg1 - var0;	// _5 = BinOp(a1 SUB _0)
 	var13 = var4 >> var5;	// _13 = BinOp(_4 BIT_SHR _5)
-	var6 = shr128s(arg0, 0x40);	// _6 = BinOp(a0 BIT_SHR 0x40 u32)
-	var7 = var6.lo;	// _7 = Cast(_6 as i64)
+	var6 = arg0 >> 0x40;	// _6 = BinOp(a0 BIT_SHR 0x40 u32)
+	var7 = (int64_t )var6;	// _7 = Cast(_6 as i64)
 	var8 = var0 - 0x1;	// _8 = BinOp(_0 SUB 0x1 u32)
 	var14 = var7 >> var8;	// _14 = BinOp(_7 BIT_SHR _8)
 	var11 = (uint64_t )var13;	// _11 = Cast(_13 as u64)
-	var9.lo = var11; var9.hi = var11 < 0 ? -1 : 0;	// _9 = Cast(_11 as i128)
-	var12.lo = var14; var12.hi = var14 < 0 ? -1 : 0;	// _12 = Cast(_14 as i128)
-	var10 = shl128s(var12, 0x40);	// _10 = BinOp(_12 BIT_SHL 0x40 u32)
-	rv = or128s(var9, var10);	// retval = BinOp(_9 BIT_OR _10)
+	var9 = (int128_t )var11;	// _9 = Cast(_11 as i128)
+	var12 = (int128_t )var14;	// _12 = Cast(_14 as i128)
+	var10 = var12 << 0x40;	// _10 = BinOp(_12 BIT_SHL 0x40 u32)
+	rv = var9 | var10;	// retval = BinOp(_9 BIT_OR _10)
 	return rv;
 	// ^ Return
 bb2:
@@ -25732,26 +26007,26 @@ bb3:
 	return rv;
 	// ^ Return
 bb4:
-	var19 = arg0.lo;	// _19 = Cast(a0 as i64)
+	var19 = (int64_t )arg0;	// _19 = Cast(a0 as i64)
 	var17 = (uint64_t )var19;	// _17 = Cast(_19 as u64)
 	var15 = arg1 & 0x3f;	// _15 = BinOp(a1 BIT_AND 0x3f u32)
 	var16 = (uint64_t )var15;	// _16 = Cast(_15 as u64)
 	var18 = var17 >> var16;
 	// ^ Call( _18 = "unchecked_shr"::<u64,>( _17, _16, ), bb5, bb6)
 	var23 = (int64_t )var18;	// _23 = Cast(_18 as i64)
-	var20 = shr128s(arg0, 0x40);	// _20 = BinOp(a0 BIT_SHR 0x40 u32)
-	var21 = var20.lo;	// _21 = Cast(_20 as i64)
+	var20 = arg0 >> 0x40;	// _20 = BinOp(a0 BIT_SHR 0x40 u32)
+	var21 = (int64_t )var20;	// _21 = Cast(_20 as i64)
 	var22 = var0 - arg1;	// _22 = BinOp(_0 SUB a1)
 	var24 = var21 << var22;	// _24 = BinOp(_21 BIT_SHL _22)
 	var31 = var23 | var24;	// _31 = BinOp(_23 BIT_OR _24)
-	var25 = shr128s(arg0, 0x40);	// _25 = BinOp(a0 BIT_SHR 0x40 u32)
-	var26 = var25.lo;	// _26 = Cast(_25 as i64)
+	var25 = arg0 >> 0x40;	// _25 = BinOp(a0 BIT_SHR 0x40 u32)
+	var26 = (int64_t )var25;	// _26 = Cast(_25 as i64)
 	var32 = var26 >> arg1;	// _32 = BinOp(_26 BIT_SHR a1)
 	var29 = (uint64_t )var31;	// _29 = Cast(_31 as u64)
-	var27.lo = var29; var27.hi = var29 < 0 ? -1 : 0;	// _27 = Cast(_29 as i128)
-	var30.lo = var32; var30.hi = var32 < 0 ? -1 : 0;	// _30 = Cast(_32 as i128)
-	var28 = shl128s(var30, 0x40);	// _28 = BinOp(_30 BIT_SHL 0x40 u32)
-	rv = or128s(var27, var28);	// retval = BinOp(_27 BIT_OR _28)
+	var27 = (int128_t )var29;	// _27 = Cast(_29 as i128)
+	var30 = (int128_t )var32;	// _30 = Cast(_32 as i128)
+	var28 = var30 << 0x40;	// _28 = BinOp(_30 BIT_SHL 0x40 u32)
+	rv = var27 | var28;	// retval = BinOp(_27 BIT_OR _28)
 	return rv;
 	// ^ Return
 bb6: _Unwind_Resume(); // Diverge
@@ -25764,7 +26039,7 @@ static RUST_BOOL  ZRQCj2cE9core0_0_03cmp9PartialEq1gCj2eq0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 == cmp128s((*arg1), (*arg0));	// retval = BinOp(a0* EQ a1*)
+	rv = (*arg0) == (*arg1);	// retval = BinOp(a0* EQ a1*)
 	return rv;
 	// ^ Return
 }
@@ -25776,7 +26051,7 @@ static RUST_BOOL  ZRQCj2cE9core0_0_03cmp10PartialOrd1gCj2lt0g(
 
 {
 	RUST_BOOL rv;
-	rv = 0 < cmp128s((*arg1), (*arg0));	// retval = BinOp(a0* LT a1*)
+	rv = (*arg0) < (*arg1);	// retval = BinOp(a0* LT a1*)
 	return rv;
 	// ^ Return
 }
@@ -25788,7 +26063,7 @@ static int128_t  ZRQCj3cE9core0_0_03ops3bit3Shl1gCe3shl0g(
 
 {
 	int128_t rv;
-	rv = shl128s(arg0, arg1);	// retval = BinOp(a0 BIT_SHL a1)
+	rv = arg0 << arg1;	// retval = BinOp(a0 BIT_SHL a1)
 	return rv;
 	// ^ Return
 }
@@ -25800,7 +26075,7 @@ static int128_t  ZRQCj3cE9core0_0_03ops3bit3Shr1gCe3shr0g(
 
 {
 	int128_t rv;
-	rv = shr128s(arg0, arg1);	// retval = BinOp(a0 BIT_SHR a1)
+	rv = arg0 >> arg1;	// retval = BinOp(a0 BIT_SHR a1)
 	return rv;
 	// ^ Return
 }

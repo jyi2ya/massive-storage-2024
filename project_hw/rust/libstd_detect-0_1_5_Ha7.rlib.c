@@ -35,62 +35,19 @@ static inline uint8_t __mrustc_atomicloop8(volatile uint8_t* slot, uint8_t param
 static inline uint16_t __mrustc_atomicloop16(volatile uint16_t* slot, uint16_t param, int ordering, uint16_t (*cb)(uint16_t, uint16_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint16_t v = atomic_load_explicit((_Atomic uint16_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint16_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint32_t __mrustc_atomicloop32(volatile uint32_t* slot, uint32_t param, int ordering, uint32_t (*cb)(uint32_t, uint32_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint32_t v = atomic_load_explicit((_Atomic uint32_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint32_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
 static inline uint64_t __mrustc_atomicloop64(volatile uint64_t* slot, uint64_t param, int ordering, uint64_t (*cb)(uint64_t, uint64_t)) { int ordering_load = (ordering == memory_order_release || ordering == memory_order_acq_rel ? memory_order_relaxed : ordering); for(;;) { uint64_t v = atomic_load_explicit((_Atomic uint64_t*)slot, ordering_load); if( atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)slot, &v, cb(v, param), ordering, ordering_load) ) return v; }}
-typedef struct { uint64_t lo, hi; } uint128_t;
-typedef struct { uint64_t lo, hi; } int128_t;
-static inline uint128_t intrinsic_ctlz_u128(uint128_t v);
-static inline uint128_t shl128(uint128_t a, uint32_t b);
-static inline uint128_t shr128(uint128_t a, uint32_t b);
-static inline float make_float(int is_neg, int exp, uint32_t mantissa_bits) { float rv; uint32_t vi=(mantissa_bits&((1<<23)-1))|((exp+127)<<23);if(is_neg)vi|=1<<31; memcpy(&rv, &vi, 4); return rv; }
-static inline double make_double(int is_neg, int exp, uint32_t mantissa_bits) { double rv; uint64_t vi=(mantissa_bits&((1ull<<52)-1))|((uint64_t)(exp+1023)<<52);if(is_neg)vi|=1ull<<63; memcpy(&rv, &vi, 4); return rv; }
-static inline uint128_t make128_raw(uint64_t hi, uint64_t lo) { uint128_t rv = { lo, hi }; return rv; }
-static inline uint128_t make128(uint64_t v) { uint128_t rv = { v, 0 }; return rv; }
-static inline float cast128_float(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(23+1))-64)); uint64_t b = shr128(y, (64-(23+1))).lo | (y.lo & 0xFFFFFFFFFF); uint64_t m = a + ((b - ((b >> 63) & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+127-1; uint32_t vi = (e << 23) + m; float rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline double cast128_double(uint128_t v) { int n = intrinsic_ctlz_u128(v).lo; uint128_t y = shl128(v, n); uint64_t a = (y.hi >> ((128-(52+1))-64)); uint64_t b = shr128(y, (64-(52+1))).lo | (y.lo & 0x7FF); uint64_t m = a + ((b - (b >> 63 & ~a)) >> 63); uint64_t e = (v.lo == 0 && v.hi == 0) ? 0 : (127 - n)+1023-1; uint64_t vi = (e << 52) + m; double rv; memcpy(&rv, &vi, sizeof(rv)); return rv; }
-static inline int cmp128(uint128_t a, uint128_t b) { if(a.hi != b.hi) return a.hi < b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo + b.lo; o->hi = a.hi + b.hi + (o->lo < a.lo ? 1 : 0); return (o->hi < a.hi); }
-static inline bool sub128_o(uint128_t a, uint128_t b, uint128_t* o) { o->lo = a.lo - b.lo; o->hi = a.hi - b.hi - (a.lo < b.lo ? 1 : 0); return (o->hi > a.hi); }
-static inline bool mul128_o(uint128_t a, uint128_t b, uint128_t* o) { bool of = false; o->hi = 0; o->lo = 0; for(int i=0;i<128;i++){ uint64_t m = (1ull << (i % 64)); if(a.hi==0&&a.lo<m)   break; if(i>=64&&a.hi<m) break; if( m & (i >= 64 ? a.hi : a.lo) ) of |= add128_o(*o, b, o); b.hi = (b.hi << 1) | (b.lo >> 63); b.lo = (b.lo << 1); } return of;}
-static inline bool div128_o(uint128_t a, uint128_t b, uint128_t* q, uint128_t* r) { if(a.hi == 0 && b.hi == 0) { if(q) { q->hi=0; q->lo = a.lo / b.lo; } if(r) { r->hi=0; r->lo = a.lo % b.lo; } return false; } if(cmp128(a, b) < 0) { if(q) { q->hi=0; q->lo=0; } if(r) *r = a; return false; } uint128_t a_div_2 = {(a.lo>>1)|(a.hi << 63), a.hi>>1}; int shift = 0; while( cmp128(a_div_2, b) >= 0 && shift < 128 ) { shift += 1; b.hi = (b.hi<<1)|(b.lo>>63); b.lo <<= 1; } if(shift == 128) return true; uint128_t mask = { /*lo=*/(shift >= 64 ? 0 : (1ull << shift)), /*hi=*/(shift < 64 ? 0 : 1ull << (shift-64)) }; shift ++; if(q) { q->hi = 0; q->lo = 0; } while(shift--) { if( cmp128(a, b) >= 0 ) { if(q) add128_o(*q, mask, q); sub128_o(a, b, &a); } mask.lo = (mask.lo >> 1) | (mask.hi << 63); mask.hi >>= 1; b.lo = (b.lo >> 1) | (b.hi << 63); b.hi >>= 1; } if(r) *r = a; return false;}
-static inline uint128_t add128(uint128_t a, uint128_t b) { uint128_t v; add128_o(a, b, &v); return v; }
-static inline uint128_t sub128(uint128_t a, uint128_t b) { uint128_t v; sub128_o(a, b, &v); return v; }
-static inline uint128_t mul128(uint128_t a, uint128_t b) { uint128_t v; mul128_o(a, b, &v); return v; }
-static inline uint128_t div128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, &v, NULL); return v; }
-static inline uint128_t mod128(uint128_t a, uint128_t b) { uint128_t v; div128_o(a, b, NULL, &v); return v;}
-static inline uint128_t and128(uint128_t a, uint128_t b) { uint128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline uint128_t or128 (uint128_t a, uint128_t b) { uint128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline uint128_t xor128(uint128_t a, uint128_t b) { uint128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline uint128_t shl128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline uint128_t shr128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = a.hi >> b; } else { v.lo = a.hi >> (b - 64); v.hi = 0; } return v; }
-static inline uint128_t popcount128(uint128_t a) { uint128_t v = { __builtin_popcountll(a.lo) + __builtin_popcountll(a.hi), 0 }; return v; }
-static inline uint128_t __builtin_bswap128(uint128_t v) { uint128_t rv = { __builtin_bswap64(v.hi), __builtin_bswap64(v.lo) }; return rv; }
+typedef unsigned __int128 uint128_t;
+typedef signed __int128 int128_t;
+static inline uint128_t __builtin_bswap128(uint128_t v) {
+	uint64_t lo = __builtin_bswap64((uint64_t)v);
+	uint64_t hi = __builtin_bswap64((uint64_t)(v>>64));
+	return ((uint128_t)lo << 64) | (uint128_t)hi;
+}
 static inline uint128_t intrinsic_ctlz_u128(uint128_t v) {
-	uint128_t rv = { (v.hi != 0 ? __builtin_clz64(v.hi) : (v.lo != 0 ? 64 + __builtin_clz64(v.lo) : 128)), 0 };
-	return rv;
+	return (v == 0 ? 128 : (v >> 64 != 0 ? __builtin_clz64(v>>64) : 64 + __builtin_clz64(v)));
 }
 static inline uint128_t intrinsic_cttz_u128(uint128_t v) {
-	uint128_t rv = { (v.lo == 0 ? (v.hi == 0 ? 128 : __builtin_ctz64(v.hi) + 64) : __builtin_ctz64(v.lo)), 0 };
-	return rv;
+	return (v == 0 ? 128 : ((v&0xFFFFFFFFFFFFFFFF) == 0 ? __builtin_ctz64(v>>64) + 64 : __builtin_ctz64(v)));
 }
-static inline int128_t make128s_raw(uint64_t hi, uint64_t lo) { int128_t rv = { lo, hi }; return rv; }
-static inline int128_t make128s(int64_t v) { int128_t rv = { v, (v < 0 ? -1 : 0) }; return rv; }
-static inline int128_t neg128s(int128_t v) { int128_t rv = { ~v.lo+1, ~v.hi + (v.lo == 0) }; return rv; }
-static inline float cast128s_float(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_float(make128_raw(v.hi,v.lo)); }
-static inline double cast128s_double(int128_t v) { int sgn = (v.hi >> 63); int128_t abs = sgn ? neg128s(v) : v; return (sgn ? -1.0 : 1.0) * cast128_double(make128_raw(v.hi,v.lo)); }
-static inline int cmp128s(int128_t a, int128_t b) { if(a.hi != b.hi) return (int64_t)a.hi < (int64_t)b.hi ? -1 : 1; if(a.lo != b.lo) return a.lo < b.lo ? -1 : 1; return 0; }
-static inline bool add128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; add128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna==sgnb && sgno != sgna); }
-static inline bool sub128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna=a.hi>>63; bool sgnb=b.hi>>63; sub128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); bool sgno = o->hi>>63; return (sgna!=sgnb && sgno != sgna); }
-static inline bool mul128s_o(int128_t a, int128_t b, int128_t* o) { bool sgna = (a.hi >> 63); bool sgnb = (b.hi >> 63); if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = mul128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)o); if(sgna != sgnb) *o = neg128s(*o); return rv; }
-static inline bool div128s_o(int128_t a, int128_t b, int128_t* q, int128_t* r) { bool sgna = (a.hi >> 63) != 0; bool sgnb = (b.hi >> 63) != 0; if(sgna) a = neg128s(a); if(sgnb) b = neg128s(b); bool rv = div128_o(*(uint128_t*)&a, *(uint128_t*)&b, (uint128_t*)q, (uint128_t*)r); if(sgna != sgnb && q) *q = neg128s(*q); if(sgna && r) *r = neg128s(*r); return rv; }
-static inline int128_t add128s(int128_t a, int128_t b) { int128_t v; add128s_o(a, b, &v); return v; }
-static inline int128_t sub128s(int128_t a, int128_t b) { int128_t v; sub128s_o(a, b, &v); return v; }
-static inline int128_t mul128s(int128_t a, int128_t b) { int128_t v; mul128s_o(a, b, &v); return v; }
-static inline int128_t div128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, &v, NULL); return v; }
-static inline int128_t mod128s(int128_t a, int128_t b) { int128_t v; div128s_o(a, b, NULL, &v); return v; }
-static inline int128_t and128s(int128_t a, int128_t b) { int128_t v = { a.lo & b.lo, a.hi & b.hi }; return v; }
-static inline int128_t or128s (int128_t a, int128_t b) { int128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }
-static inline int128_t xor128s(int128_t a, int128_t b) { int128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }
-static inline int128_t shl128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }
-static inline int128_t shr128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = (int64_t)a.hi >> b; } else { v.lo = (int64_t)a.hi >> (b - 64); v.hi = (int64_t)a.hi < 0 ? -1 : 0; } return v; }
 
 static inline int slice_cmp(SLICE_PTR l, SLICE_PTR r) {
 	int rv = memcmp(l.PTR, r.PTR, l.META < r.META ? l.META : r.META);
@@ -118,7 +75,7 @@ static inline uint8_t __mrustc_bitrev8(uint8_t v) { if(v==0||v==0xFF) return v; 
 static inline uint16_t __mrustc_bitrev16(uint16_t v) { if(v==0) return 0; return ((uint16_t)__mrustc_bitrev8(v>>8))|((uint16_t)__mrustc_bitrev8(v)<<8); }
 static inline uint32_t __mrustc_bitrev32(uint32_t v) { if(v==0) return 0; return ((uint32_t)__mrustc_bitrev16(v>>16))|((uint32_t)__mrustc_bitrev16(v)<<16); }
 static inline uint64_t __mrustc_bitrev64(uint64_t v) { if(v==0) return 0; return ((uint64_t)__mrustc_bitrev32(v>>32))|((uint64_t)__mrustc_bitrev32(v)<<32); }
-static inline uint128_t __mrustc_bitrev128(uint128_t v) { uint128_t rv = { __mrustc_bitrev64(v.hi), __mrustc_bitrev64(v.lo) }; return rv; }
+static inline uint128_t __mrustc_bitrev128(uint128_t v) { if(v==0) return 0; uint128_t rv = ((uint128_t)__mrustc_bitrev64(v>>64))|((uint128_t)__mrustc_bitrev64(v)<<64); return rv; }
 static inline uint8_t __mrustc_op_umax8(uint8_t a, uint8_t b) { return (a > b ? a : b); }
 static inline uint8_t __mrustc_op_umin8(uint8_t a, uint8_t b) { return (a < b ? a : b); }
 static inline uint8_t __mrustc_op_imax8(uint8_t a, uint8_t b) { return ((int8_t)a > (int8_t)b ? a : b); }
@@ -492,152 +449,125 @@ static void  ZRG3cE9core0_0_04sync6atomic12atomic_store1gCu(
 		struct e_ZRG3cE9core0_0_04sync6atomic8Ordering0g arg2 // ::"core-0_0_0"::sync::atomic::Ordering/*E*/
 		) // -> ()
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::adx
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3adx0g(void) // -> bool
-;
 // PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::aes
 RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3aes0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3avx0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::asimd
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5asimd0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4avx20g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bf16
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4bf160g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512bf16
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512bf160g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bti
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3bti0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512bitalg
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected12avx512bitalg0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::crc
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3crc0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512bw
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512bw0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dit
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3dit0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512cd
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512cd0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dotprod
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected7dotprod0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512dq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512dq0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dpb
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3dpb0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512er
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512er0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dpb2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4dpb20g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512f
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected7avx512f0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::f32mm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5f32mm0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512gfni
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512gfni0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::f64mm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5f64mm0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512ifma
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512ifma0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fcma
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4fcma0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512pf
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512pf0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fhm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3fhm0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vaes
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512vaes0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::flagm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5flagm0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vbmi
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512vbmi0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fp
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected2fp0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vbmi2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected11avx512vbmi20g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fp16
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4fp160g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vl
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512vl0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::frintts
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected7frintts0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vnni
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512vnni0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::i8mm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4i8mm0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vp2intersect
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected18avx512vp2intersect0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::jsconv
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6jsconv0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vpclmulqdq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected16avx512vpclmulqdq0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::lse
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3lse0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vpopcntdq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected15avx512vpopcntdq0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::lse2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4lse20g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bmi1
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4bmi10g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::mte
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3mte0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bmi2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4bmi20g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::pauth
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5pauth0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::cmpxchg16b
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10cmpxchg16b0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::pmull
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5pmull0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::f16c
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4f16c0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rand
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4rand0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fma
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3fma0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rcpc
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4rcpc0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fxsr
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4fxsr0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rcpc2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5rcpc20g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::lzcnt
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5lzcnt0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rdm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3rdm0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::mmx
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3mmx0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sb
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected2sb0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::pclmulqdq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected9pclmulqdq0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sha2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sha20g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::popcnt
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6popcnt0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sha3
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sha30g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rdrand
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6rdrand0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sm4
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sm40g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rdseed
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6rdseed0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::ssbs
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4ssbs0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rtm
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3rtm0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sve0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sha
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sha0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sve20g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sse0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_aes
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8sve2_aes0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sse20g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_bitperm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected12sve2_bitperm0g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse3
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sse30g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_sha3
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected9sve2_sha30g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse4_1
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6sse4_10g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_sm4
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8sve2_sm40g(void) // -> bool
 ;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse4_2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6sse4_20g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse4a
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5sse4a0g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::ssse3
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5ssse30g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::tbm
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tbm0g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::tsc
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tsc0g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsave
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5xsave0g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsavec
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6xsavec0g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsaveopt
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8xsaveopt0g(void) // -> bool
-;
-// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsaves
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6xsaves0g(void) // -> bool
+// PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::tme
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tme0g(void) // -> bool
 ;
 // PROTO extern "Rust" ::"std_detect-0_1_5_Ha7"::detect::bit::test
 RUST_BOOL  ZRG3cK19std_detect0_1_5_Ha76detect3bit4test0g(
@@ -1298,250 +1228,8 @@ bb6:
 	// ^ Return
 bb7: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::adx
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3adx0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2f );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2f u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
 // ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::aes
 RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3aes0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x0 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x0 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3avx0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xe );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xe u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4avx20g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xf );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xf u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512bf16
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512bf160g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x20 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x20 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512bitalg
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected12avx512bitalg0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1f );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1f u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512bw
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512bw0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x14 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x14 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512cd
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512cd0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x11 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x11 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512dq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512dq0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x15 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x15 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512er
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512er0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x12 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x12 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512f
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected7avx512f0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x10 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x10 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512gfni
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512gfni0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1b );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1b u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512ifma
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512ifma0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x17 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x17 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512pf
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512pf0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x13 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x13 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vaes
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512vaes0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1c );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1c u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vbmi
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512vbmi0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x18 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x18 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vbmi2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected11avx512vbmi20g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1a );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1a u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vl
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8avx512vl0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x16 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x16 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vnni
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10avx512vnni0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1e );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1e u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vp2intersect
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected18avx512vp2intersect0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x21 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x21 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vpclmulqdq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected16avx512vpclmulqdq0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1d );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1d u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::avx512vpopcntdq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected15avx512vpopcntdq0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x19 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x19 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bmi1
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4bmi10g(void) // -> bool
 
 {
 	RUST_BOOL rv;
@@ -1551,74 +1239,41 @@ RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4bmi10g
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bmi2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4bmi20g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::asimd
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5asimd0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x25 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x25 u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x0 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x0 u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::cmpxchg16b
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected10cmpxchg16b0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bf16
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4bf160g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2e );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2e u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1e );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1e u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::f16c
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4f16c0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::bti
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3bti0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x22 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x22 u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x20 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x20 u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fma
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3fma0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x23 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x23 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fxsr
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4fxsr0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x29 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x29 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::lzcnt
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5lzcnt0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x26 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x26 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::mmx
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3mmx0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::crc
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3crc0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
@@ -1628,118 +1283,19 @@ RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3mmx0g(
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::pclmulqdq
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected9pclmulqdq0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dit
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3dit0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1 u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xe );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xe u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::popcnt
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6popcnt0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x28 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x28 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rdrand
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6rdrand0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rdseed
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6rdseed0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x3 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x3 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rtm
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3rtm0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x30 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x30 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sha
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sha0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xd );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xd u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sse0g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x6 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x6 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sse20g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x7 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x7 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse3
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sse30g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x8 );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x8 u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse4_1
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6sse4_10g(void) // -> bool
-
-{
-	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xa );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xa u32, ), bb1, bb2)
-	return rv;
-	// ^ Return
-bb2: _Unwind_Resume(); // Diverge
-}
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse4_2
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6sse4_20g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dotprod
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected7dotprod0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
@@ -1749,19 +1305,206 @@ RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6sse4_2
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sse4a
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5sse4a0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dpb
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3dpb0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xc );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xc u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x13 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x13 u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::ssse3
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5ssse30g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::dpb2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4dpb20g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x14 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x14 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::f32mm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5f32mm0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1c );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1c u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::f64mm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5f64mm0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1d );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1d u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fcma
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4fcma0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x23 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x23 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fhm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3fhm0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xd );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xd u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::flagm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5flagm0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xf );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xf u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fp
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected2fp0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::fp16
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4fp160g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x3 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x3 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::frintts
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected7frintts0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1a );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1a u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::i8mm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4i8mm0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1b );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1b u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::jsconv
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6jsconv0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x22 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x22 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::lse
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3lse0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x6 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x6 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::lse2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4lse20g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x7 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x7 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::mte
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3mte0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x21 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x21 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::pauth
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5pauth0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x12 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x12 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::pmull
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5pmull0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rand
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4rand0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x1f );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x1f u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rcpc
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4rcpc0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
@@ -1771,8 +1514,63 @@ RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5ssse30
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::tbm
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tbm0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rcpc2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5rcpc20g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xa );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xa u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::rdm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3rdm0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x8 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x8 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sb
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected2sb0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x11 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x11 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sha2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sha20g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x25 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x25 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sha3
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sha30g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x26 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x26 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sm4
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sm40g(void) // -> bool
 
 {
 	RUST_BOOL rv;
@@ -1782,8 +1580,19 @@ RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tbm0g(
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::tsc
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tsc0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::ssbs
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4ssbs0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x10 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x10 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3sve0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
@@ -1793,46 +1602,68 @@ RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tsc0g(
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsave
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected5xsave0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected4sve20g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2a );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2a u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x15 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x15 u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsavec
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6xsavec0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_aes
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8sve2_aes0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2d );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2d u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x16 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x16 u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsaveopt
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8xsaveopt0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_bitperm
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected12sve2_bitperm0g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2b );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2b u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x19 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x19 u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
 }
-// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::xsaves
-RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected6xsaves0g(void) // -> bool
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_sha3
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected9sve2_sha30g(void) // -> bool
 
 {
 	RUST_BOOL rv;
-	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x2c );
-	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x2c u32, ), bb1, bb2)
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x18 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x18 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::sve2_sm4
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected8sve2_sm40g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0x17 );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0x17 u32, ), bb1, bb2)
+	return rv;
+	// ^ Return
+bb2: _Unwind_Resume(); // Diverge
+}
+// ::"std_detect-0_1_5_Ha7"::detect::arch::__is_feature_detected::tme
+RUST_BOOL  ZRG4cK19std_detect0_1_5_Ha76detect4arch21__is_feature_detected3tme0g(void) // -> bool
+
+{
+	RUST_BOOL rv;
+	rv = ZRG3cK19std_detect0_1_5_Ha76detect5cache4test0g( 0xc );
+	// ^ Call( retval = ::"std_detect-0_1_5_Ha7"::detect::cache::test( 0xc u32, ), bb1, bb2)
 	return rv;
 	// ^ Return
 bb2: _Unwind_Resume(); // Diverge
@@ -2054,7 +1885,7 @@ struct s_ZRG4cE9core0_0_04iter8adapters3map3Map2gG3c_A3ops5range5Range1gCaG2cK19
 	struct s_ZRG3cE9core0_0_03ops5range5Range1gCa var0;	// ::"core-0_0_0"::ops::range::Range<u8,>/*S*/
 	struct s_ZRG2cK19std_detect0_1_5_Ha76detectH17closurefeatures_00g var1 = {0};	// ::"std_detect-0_1_5_Ha7"::detect::closure#features_0/*S*/
 	var0._0 = 0x0;
-	var0._1 = 0x31;	// _0 = Struct(::"core-0_0_0"::ops::range::Range<u8,>, {0x0 u8, 0x31 u8})
+	var0._1 = 0x28;	// _0 = Struct(::"core-0_0_0"::ops::range::Range<u8,>, {0x0 u8, 0x28 u8})
 	/* ZST assign */
 	rv._0 = var0;	// retval = Struct(::"core-0_0_0"::iter::adapters::map::Map<::"core-0_0_0"::ops::range::Range<u8,>/*S*/,::"std_detect-0_1_5_Ha7"::detect::closure#features_0/*S*/,>, {_0, _1})
 	return rv;
@@ -2337,218 +2168,173 @@ SLICE_PTR  ZRIG3cK19std_detect0_1_5_Ha76detect4arch7Feature0g6to_str0g(
 	case 38: goto bb39;break;
 	case 39: goto bb40;break;
 	case 40: goto bb41;break;
-	case 41: goto bb42;break;
-	case 42: goto bb43;break;
-	case 43: goto bb44;break;
-	case 44: goto bb45;break;
-	case 45: goto bb46;break;
-	case 46: goto bb47;break;
-	case 47: goto bb48;break;
-	case 48: goto bb49;break;
-	case 49: goto bb50;break;
 	default: abort();
 	}
-	// ^ Switch( a0 : 0 => bb1, 1 => bb2, 2 => bb3, 3 => bb4, 4 => bb5, 5 => bb6, 6 => bb7, 7 => bb8, 8 => bb9, 9 => bb10, 10 => bb11, 11 => bb12, 12 => bb13, 13 => bb14, 14 => bb15, 15 => bb16, 16 => bb17, 17 => bb18, 18 => bb19, 19 => bb20, 20 => bb21, 21 => bb22, 22 => bb23, 23 => bb24, 24 => bb25, 25 => bb26, 26 => bb27, 27 => bb28, 28 => bb29, 29 => bb30, 30 => bb31, 31 => bb32, 32 => bb33, 33 => bb34, 34 => bb35, 35 => bb36, 36 => bb37, 37 => bb38, 38 => bb39, 39 => bb40, 40 => bb41, 41 => bb42, 42 => bb43, 43 => bb44, 44 => bb45, 45 => bb46, 46 => bb47, 47 => bb48, 48 => bb49, 49 => bb50, )
+	// ^ Switch( a0 : 0 => bb1, 1 => bb2, 2 => bb3, 3 => bb4, 4 => bb5, 5 => bb6, 6 => bb7, 7 => bb8, 8 => bb9, 9 => bb10, 10 => bb11, 11 => bb12, 12 => bb13, 13 => bb14, 14 => bb15, 15 => bb16, 16 => bb17, 17 => bb18, 18 => bb19, 19 => bb20, 20 => bb21, 21 => bb22, 22 => bb23, 23 => bb24, 24 => bb25, 25 => bb26, 26 => bb27, 27 => bb28, 28 => bb29, 29 => bb30, 30 => bb31, 31 => bb32, 32 => bb33, 33 => bb34, 34 => bb35, 35 => bb36, 36 => bb37, 37 => bb38, 38 => bb39, 39 => bb40, 40 => bb41, )
 bb1:
-	rv = make_sliceptr("aes", 3);	// retval = Constant("aes")
+	rv = make_sliceptr("neon", 4);	// retval = Constant("neon")
 	return rv;
 	// ^ Return
 bb2:
-	rv = make_sliceptr("pclmulqdq", 9);	// retval = Constant("pclmulqdq")
+	rv = make_sliceptr("pmull", 5);	// retval = Constant("pmull")
 	return rv;
 	// ^ Return
 bb3:
-	rv = make_sliceptr("rdrand", 6);	// retval = Constant("rdrand")
+	rv = make_sliceptr("fp", 2);	// retval = Constant("fp")
 	return rv;
 	// ^ Return
 bb4:
-	rv = make_sliceptr("rdseed", 6);	// retval = Constant("rdseed")
+	rv = make_sliceptr("fp16", 4);	// retval = Constant("fp16")
 	return rv;
 	// ^ Return
 bb5:
-	rv = make_sliceptr("tsc", 3);	// retval = Constant("tsc")
+	rv = make_sliceptr("sve", 3);	// retval = Constant("sve")
 	return rv;
 	// ^ Return
 bb6:
-	rv = make_sliceptr("mmx", 3);	// retval = Constant("mmx")
+	rv = make_sliceptr("crc", 3);	// retval = Constant("crc")
 	return rv;
 	// ^ Return
 bb7:
-	rv = make_sliceptr("sse", 3);	// retval = Constant("sse")
+	rv = make_sliceptr("lse", 3);	// retval = Constant("lse")
 	return rv;
 	// ^ Return
 bb8:
-	rv = make_sliceptr("sse2", 4);	// retval = Constant("sse2")
+	rv = make_sliceptr("lse2", 4);	// retval = Constant("lse2")
 	return rv;
 	// ^ Return
 bb9:
-	rv = make_sliceptr("sse3", 4);	// retval = Constant("sse3")
+	rv = make_sliceptr("rdm", 3);	// retval = Constant("rdm")
 	return rv;
 	// ^ Return
 bb10:
-	rv = make_sliceptr("ssse3", 5);	// retval = Constant("ssse3")
+	rv = make_sliceptr("rcpc", 4);	// retval = Constant("rcpc")
 	return rv;
 	// ^ Return
 bb11:
-	rv = make_sliceptr("sse4.1", 6);	// retval = Constant("sse4.1")
+	rv = make_sliceptr("rcpc2", 5);	// retval = Constant("rcpc2")
 	return rv;
 	// ^ Return
 bb12:
-	rv = make_sliceptr("sse4.2", 6);	// retval = Constant("sse4.2")
+	rv = make_sliceptr("dotprod", 7);	// retval = Constant("dotprod")
 	return rv;
 	// ^ Return
 bb13:
-	rv = make_sliceptr("sse4a", 5);	// retval = Constant("sse4a")
+	rv = make_sliceptr("tme", 3);	// retval = Constant("tme")
 	return rv;
 	// ^ Return
 bb14:
-	rv = make_sliceptr("sha", 3);	// retval = Constant("sha")
+	rv = make_sliceptr("fhm", 3);	// retval = Constant("fhm")
 	return rv;
 	// ^ Return
 bb15:
-	rv = make_sliceptr("avx", 3);	// retval = Constant("avx")
+	rv = make_sliceptr("dit", 3);	// retval = Constant("dit")
 	return rv;
 	// ^ Return
 bb16:
-	rv = make_sliceptr("avx2", 4);	// retval = Constant("avx2")
+	rv = make_sliceptr("flagm", 5);	// retval = Constant("flagm")
 	return rv;
 	// ^ Return
 bb17:
-	rv = make_sliceptr("avx512f", 7);	// retval = Constant("avx512f")
+	rv = make_sliceptr("ssbs", 4);	// retval = Constant("ssbs")
 	return rv;
 	// ^ Return
 bb18:
-	rv = make_sliceptr("avx512cd", 8);	// retval = Constant("avx512cd")
+	rv = make_sliceptr("sb", 2);	// retval = Constant("sb")
 	return rv;
 	// ^ Return
 bb19:
-	rv = make_sliceptr("avx512er", 8);	// retval = Constant("avx512er")
+	rv = make_sliceptr("pauth", 5);	// retval = Constant("pauth")
 	return rv;
 	// ^ Return
 bb20:
-	rv = make_sliceptr("avx512pf", 8);	// retval = Constant("avx512pf")
+	rv = make_sliceptr("dpb", 3);	// retval = Constant("dpb")
 	return rv;
 	// ^ Return
 bb21:
-	rv = make_sliceptr("avx512bw", 8);	// retval = Constant("avx512bw")
+	rv = make_sliceptr("dpb2", 4);	// retval = Constant("dpb2")
 	return rv;
 	// ^ Return
 bb22:
-	rv = make_sliceptr("avx512dq", 8);	// retval = Constant("avx512dq")
+	rv = make_sliceptr("sve2", 4);	// retval = Constant("sve2")
 	return rv;
 	// ^ Return
 bb23:
-	rv = make_sliceptr("avx512vl", 8);	// retval = Constant("avx512vl")
+	rv = make_sliceptr("sve2-aes", 8);	// retval = Constant("sve2-aes")
 	return rv;
 	// ^ Return
 bb24:
-	rv = make_sliceptr("avx512ifma", 10);	// retval = Constant("avx512ifma")
+	rv = make_sliceptr("sve2-sm4", 8);	// retval = Constant("sve2-sm4")
 	return rv;
 	// ^ Return
 bb25:
-	rv = make_sliceptr("avx512vbmi", 10);	// retval = Constant("avx512vbmi")
+	rv = make_sliceptr("sve2-sha3", 9);	// retval = Constant("sve2-sha3")
 	return rv;
 	// ^ Return
 bb26:
-	rv = make_sliceptr("avx512vpopcntdq", 15);	// retval = Constant("avx512vpopcntdq")
+	rv = make_sliceptr("sve2-bitperm", 12);	// retval = Constant("sve2-bitperm")
 	return rv;
 	// ^ Return
 bb27:
-	rv = make_sliceptr("avx512vbmi2", 11);	// retval = Constant("avx512vbmi2")
+	rv = make_sliceptr("frintts", 7);	// retval = Constant("frintts")
 	return rv;
 	// ^ Return
 bb28:
-	rv = make_sliceptr("avx512gfni", 10);	// retval = Constant("avx512gfni")
+	rv = make_sliceptr("i8mm", 4);	// retval = Constant("i8mm")
 	return rv;
 	// ^ Return
 bb29:
-	rv = make_sliceptr("avx512vaes", 10);	// retval = Constant("avx512vaes")
+	rv = make_sliceptr("f32mm", 5);	// retval = Constant("f32mm")
 	return rv;
 	// ^ Return
 bb30:
-	rv = make_sliceptr("avx512vpclmulqdq", 16);	// retval = Constant("avx512vpclmulqdq")
+	rv = make_sliceptr("f64mm", 5);	// retval = Constant("f64mm")
 	return rv;
 	// ^ Return
 bb31:
-	rv = make_sliceptr("avx512vnni", 10);	// retval = Constant("avx512vnni")
+	rv = make_sliceptr("bf16", 4);	// retval = Constant("bf16")
 	return rv;
 	// ^ Return
 bb32:
-	rv = make_sliceptr("avx512bitalg", 12);	// retval = Constant("avx512bitalg")
+	rv = make_sliceptr("rand", 4);	// retval = Constant("rand")
 	return rv;
 	// ^ Return
 bb33:
-	rv = make_sliceptr("avx512bf16", 10);	// retval = Constant("avx512bf16")
+	rv = make_sliceptr("bti", 3);	// retval = Constant("bti")
 	return rv;
 	// ^ Return
 bb34:
-	rv = make_sliceptr("avx512vp2intersect", 18);	// retval = Constant("avx512vp2intersect")
+	rv = make_sliceptr("mte", 3);	// retval = Constant("mte")
 	return rv;
 	// ^ Return
 bb35:
-	rv = make_sliceptr("f16c", 4);	// retval = Constant("f16c")
+	rv = make_sliceptr("jsconv", 6);	// retval = Constant("jsconv")
 	return rv;
 	// ^ Return
 bb36:
-	rv = make_sliceptr("fma", 3);	// retval = Constant("fma")
+	rv = make_sliceptr("fcma", 4);	// retval = Constant("fcma")
 	return rv;
 	// ^ Return
 bb37:
-	rv = make_sliceptr("bmi1", 4);	// retval = Constant("bmi1")
+	rv = make_sliceptr("aes", 3);	// retval = Constant("aes")
 	return rv;
 	// ^ Return
 bb38:
-	rv = make_sliceptr("bmi2", 4);	// retval = Constant("bmi2")
+	rv = make_sliceptr("sha2", 4);	// retval = Constant("sha2")
 	return rv;
 	// ^ Return
 bb39:
-	rv = make_sliceptr("lzcnt", 5);	// retval = Constant("lzcnt")
+	rv = make_sliceptr("sha3", 4);	// retval = Constant("sha3")
 	return rv;
 	// ^ Return
 bb40:
-	rv = make_sliceptr("tbm", 3);	// retval = Constant("tbm")
+	rv = make_sliceptr("sm4", 3);	// retval = Constant("sm4")
 	return rv;
 	// ^ Return
 bb41:
-	rv = make_sliceptr("popcnt", 6);	// retval = Constant("popcnt")
-	return rv;
-	// ^ Return
-bb42:
-	rv = make_sliceptr("fxsr", 4);	// retval = Constant("fxsr")
-	return rv;
-	// ^ Return
-bb43:
-	rv = make_sliceptr("xsave", 5);	// retval = Constant("xsave")
-	return rv;
-	// ^ Return
-bb44:
-	rv = make_sliceptr("xsaveopt", 8);	// retval = Constant("xsaveopt")
-	return rv;
-	// ^ Return
-bb45:
-	rv = make_sliceptr("xsaves", 6);	// retval = Constant("xsaves")
-	return rv;
-	// ^ Return
-bb46:
-	rv = make_sliceptr("xsavec", 6);	// retval = Constant("xsavec")
-	return rv;
-	// ^ Return
-bb47:
-	rv = make_sliceptr("cmpxchg16b", 10);	// retval = Constant("cmpxchg16b")
-	return rv;
-	// ^ Return
-bb48:
-	rv = make_sliceptr("adx", 3);	// retval = Constant("adx")
-	return rv;
-	// ^ Return
-bb49:
-	rv = make_sliceptr("rtm", 3);	// retval = Constant("rtm")
-	return rv;
-	// ^ Return
-bb50:
 	ZRG2cE9core0_0_09panicking5panic0g( make_sliceptr("internal error: entered unreachable code", 40) );
-	// ^ Call( _0 = ::"core-0_0_0"::panicking::panic( "internal error: entered unreachable code", ), bb51, bb51)
-bb51: _Unwind_Resume(); // Diverge
+	// ^ Call( _0 = ::"core-0_0_0"::panicking::panic( "internal error: entered unreachable code", ), bb42, bb42)
+bb42: _Unwind_Resume(); // Diverge
 }
 // <::"std_detect-0_1_5_Ha7"::detect::cache::Cache/*S*/ /*- */>::initialize
 uintptr_t  ZRIG3cK19std_detect0_1_5_Ha76detect5cache5Cache0g10initialize0g(
@@ -3638,18 +3424,9 @@ struct e_ZRG3cK19std_detect0_1_5_Ha76detect4arch7Feature0g  ZRQG3cK19std_detect0
 	case 38: goto bb39;break;
 	case 39: goto bb40;break;
 	case 40: goto bb41;break;
-	case 41: goto bb42;break;
-	case 42: goto bb43;break;
-	case 43: goto bb44;break;
-	case 44: goto bb45;break;
-	case 45: goto bb46;break;
-	case 46: goto bb47;break;
-	case 47: goto bb48;break;
-	case 48: goto bb49;break;
-	case 49: goto bb50;break;
 	default: abort();
 	}
-	// ^ Switch( a0* : 0 => bb1, 1 => bb2, 2 => bb3, 3 => bb4, 4 => bb5, 5 => bb6, 6 => bb7, 7 => bb8, 8 => bb9, 9 => bb10, 10 => bb11, 11 => bb12, 12 => bb13, 13 => bb14, 14 => bb15, 15 => bb16, 16 => bb17, 17 => bb18, 18 => bb19, 19 => bb20, 20 => bb21, 21 => bb22, 22 => bb23, 23 => bb24, 24 => bb25, 25 => bb26, 26 => bb27, 27 => bb28, 28 => bb29, 29 => bb30, 30 => bb31, 31 => bb32, 32 => bb33, 33 => bb34, 34 => bb35, 35 => bb36, 36 => bb37, 37 => bb38, 38 => bb39, 39 => bb40, 40 => bb41, 41 => bb42, 42 => bb43, 43 => bb44, 44 => bb45, 45 => bb46, 46 => bb47, 47 => bb48, 48 => bb49, 49 => bb50, )
+	// ^ Switch( a0* : 0 => bb1, 1 => bb2, 2 => bb3, 3 => bb4, 4 => bb5, 5 => bb6, 6 => bb7, 7 => bb8, 8 => bb9, 9 => bb10, 10 => bb11, 11 => bb12, 12 => bb13, 13 => bb14, 14 => bb15, 15 => bb16, 16 => bb17, 17 => bb18, 18 => bb19, 19 => bb20, 20 => bb21, 21 => bb22, 22 => bb23, 23 => bb24, 24 => bb25, 25 => bb26, 26 => bb27, 27 => bb28, 28 => bb29, 29 => bb30, 30 => bb31, 31 => bb32, 32 => bb33, 33 => bb34, 34 => bb35, 35 => bb36, 36 => bb37, 37 => bb38, 38 => bb39, 39 => bb40, 40 => bb41, )
 bb1:
 	rv.TAG = 0;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #0, {})
 	return rv;
@@ -3812,42 +3589,6 @@ bb40:
 	// ^ Return
 bb41:
 	rv.TAG = 40;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #40, {})
-	return rv;
-	// ^ Return
-bb42:
-	rv.TAG = 41;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #41, {})
-	return rv;
-	// ^ Return
-bb43:
-	rv.TAG = 42;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #42, {})
-	return rv;
-	// ^ Return
-bb44:
-	rv.TAG = 43;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #43, {})
-	return rv;
-	// ^ Return
-bb45:
-	rv.TAG = 44;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #44, {})
-	return rv;
-	// ^ Return
-bb46:
-	rv.TAG = 45;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #45, {})
-	return rv;
-	// ^ Return
-bb47:
-	rv.TAG = 46;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #46, {})
-	return rv;
-	// ^ Return
-bb48:
-	rv.TAG = 47;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #47, {})
-	return rv;
-	// ^ Return
-bb49:
-	rv.TAG = 48;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #48, {})
-	return rv;
-	// ^ Return
-bb50:
-	rv.TAG = 49;	// retval = Variant(::"std_detect-0_1_5_Ha7"::detect::arch::Feature #49, {})
 	return rv;
 	// ^ Return
 }

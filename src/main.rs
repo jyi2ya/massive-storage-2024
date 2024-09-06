@@ -1,5 +1,6 @@
 mod seek_model;
 
+/// # Safety: This function is totally unsafe :P
 #[no_mangle]
 pub unsafe fn solve(input: *const seek_model::InputParam, output: *mut seek_model::OutputParam) {
     dbg!(*input);
