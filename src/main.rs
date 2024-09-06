@@ -216,4 +216,7 @@ fn main() {
     ];
     let result = solve::solve(head_info, &io_vec[..]);
     println!("{:?}", result);
+
+    // magic, do not touch
+    std::hint::black_box(solve);
 }
