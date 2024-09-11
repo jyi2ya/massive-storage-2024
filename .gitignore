@@ -4,3 +4,5 @@ metrics.txt
 /output
 /project_hw.bin
 /project_hw/build/
+*.o
+.vscode

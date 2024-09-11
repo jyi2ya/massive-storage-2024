@@ -1,11 +1,22 @@
 mod seek_model;
 mod solve;
+mod utility;
 
+/// 磁头的运动状态
 #[derive(Clone, Copy, Debug)]
 pub enum HeadStatus {
+    /// 磁头没动
     Static = 0,
+    /// 磁头正在读写
     Rw = 1,
-    Butt = 2,
+    /// 正在倒带
+    Seek = 2,
+}
+
+impl From<HeadStatus> for u32 {
+    fn from(value: HeadStatus) -> Self {
+        value as u32
+    }
 }
 
 impl From<u32> for HeadStatus {
@@ -13,13 +24,14 @@ impl From<u32> for HeadStatus {
         match value {
             0 => Self::Static,
             1 => Self::Rw,
-            2 => Self::Butt,
+            2 => Self::Seek,
             _ => panic!("invalid HeadStatus variant"),
         }
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+/// IO 请求的编号
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct UnitId(u32);
 
 impl From<u32> for UnitId {
@@ -34,7 +46,8 @@ impl UnitId {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+/// 磁带的 Warp 序号
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WrapId(u32);
 
 impl From<u32> for WrapId {
@@ -49,10 +62,14 @@ impl WrapId {
     }
 }
 
+/// 磁头状态
 #[derive(Clone, Debug)]
 pub struct HeadInfo {
+    /// 磁头所在的 Wrap
     pub wrap: WrapId,
+    /// 磁头在 Warp 中的位置
     pub lpos: u32,
+    /// 磁头的运动状态
     pub status: HeadStatus,
 }
 
@@ -67,11 +84,26 @@ impl From<seek_model::HeadInfo> for HeadInfo {
     }
 }
 
+impl From<&HeadInfo> for seek_model::HeadInfo {
+    fn from(value: &HeadInfo) -> Self {
+        seek_model::HeadInfo {
+            wrap: value.wrap.get(),
+            lpos: value.lpos,
+            status: u32::from(value.status),
+        }
+    }
+}
+
+/// IO 请求
 #[derive(Clone, Debug)]
 pub struct Unit {
+    /// 请求 Id
     pub id: UnitId,
+    /// 磁带 Warp Id
     pub wrap: WrapId,
+    /// IO 的起始位置
     pub start_lpos: u32,
+    /// IO 的终了位置
     pub end_lpos: u32,
 }
 
@@ -94,12 +126,14 @@ impl From<seek_model::IOUint> for Unit {
 
 /// # Safety
 ///
-/// trust me
+/// totally unsafe
+///
+/// 供 project_hw 调用的 C 接口。不用太关心
 #[no_mangle]
 pub unsafe fn solve(input: *const seek_model::InputParam, output: *mut seek_model::OutputParam) {
     let input_param = *input;
     let head_info = HeadInfo::from(input_param.headInfo);
-    let io_vec = Vec::from_raw_parts(
+    let io_units = Vec::from_raw_parts(
         input_param.ioVec.ioArray,
         input_param.ioVec.len as usize,
         input_param.ioVec.len as usize,
@@ -108,14 +142,17 @@ pub unsafe fn solve(input: *const seek_model::InputParam, output: *mut seek_mode
     .map(Unit::from)
     .collect::<Vec<_>>()
     .leak();
-    let result = solve::solve(head_info, io_vec)
-        .iter()
-        .map(UnitId::get)
-        .collect::<Vec<_>>();
+
+    let result = solve::solve(&head_info, io_units);
+
+    let result = result.iter().map(UnitId::get).collect::<Vec<_>>();
     std::ptr::copy(result.as_ptr(), (*output).sequence, result.len());
     (*output).len = result.len() as u32;
 }
 
+/// 虽然是 main 函数，但是并没有什么用，只是用来占位的
+/// mrustc 编译没 main 的库的时候会有奇怪的问题，不太搞得定
+/// 所以加了个没什么用的 main
 fn main() {
     let head_info = HeadInfo {
         wrap: WrapId(8),
@@ -214,9 +251,9 @@ fn main() {
             end_lpos: 185600,
         },
     ];
-    let result = solve::solve(head_info, &io_vec[..]);
+    let result = solve::solve(&head_info, &io_vec[..]);
     println!("{:?}", result);
 
     // magic, do not touch
-    std::hint::black_box(solve);
+    println!("{:?}", solve as *const u8);
 }
